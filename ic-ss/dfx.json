@@ -1,0 +1,10 @@
+{
+  "canisters": {
+    "storage_service": {
+      "main": "src/ApplicationService.mo",
+      "type": "motoko",
+      "dependencies": []
+    }
+  },
+  "version": 1
+}
