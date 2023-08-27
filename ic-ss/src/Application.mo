@@ -198,12 +198,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Registers  a new folder (empty) in the active bucket of the specified repository.  
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func new_folder(repository_id : Text, name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func new_directory(repository_id : Text, name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.new_folder(name);
+				await bucket_actor.new_directory(name);
 			};
 			case (null) {
 				return #err(#NotFound);

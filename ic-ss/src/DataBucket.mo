@@ -34,14 +34,16 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	stable var resource_data : Trie.Trie<Text, [Blob]> = Trie.empty();
 	
 	// number of all res
-	stable var total_resources : Nat = 0;
+	stable var total_files : Nat = 0;
 	// number of directories
-	stable var total_folders : Nat = 0;
+	stable var total_directories : Nat = 0;
 	// increment counter, internal needs
-	stable var chunk_counter : Nat = 0;
+	stable var chunk_increment : Nat = 0;
+	// resource counter, internal needs
+	stable var resource_increment : Nat = 0;	
 	// -------------------------------------------------
 
-	// -----  resources and chunks stored in heap and flushed to stable memory in case of canister upgrade
+	// -----  resource metadata and chunks are stored in heap and flushed to stable memory in case of canister upgrade
 
 	// resource information (aka files/folders)
 	private var resources = Map.HashMap<Text, Types.Resource>(0, Text.equal, Text.hash);
@@ -93,35 +95,35 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		}
 	};	
 	/**
-	* Creates an empty folder (resource with type Folder).
+	* Creates an empty directory (resource with type Directory).
 	* Folders are used to organize resources, for convenience, or to deploy logically groupped files
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func new_folder(folder : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func new_directory(name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));
 
 		let canister_id = Principal.toText(Principal.fromActor(this));				
-		let folder_id = Utils.hash(canister_id, [folder]);		
-		switch (resources.get(folder_id)) {
+		let directory_id = Utils.hash(canister_id, [name]);		
+		switch (resources.get(directory_id)) {
 			case (?f) {
 				return #err(#AlreadyRegistered);				
 			};
 			case (null) {
-				resources.put(folder_id, {
-					resource_type = #Folder;
+				resources.put(directory_id, {
+					resource_type = #Directory;
 					var http_headers = [];
 					payload = [];
 					content_size = 0;
 					created = Time.now();
-					name = folder;
+					name = name;
 					parent = null;
 					var leafs = List.nil();
-					});
-				total_folders  := total_folders + 1;
+				});
+				total_directories  := total_directories + 1;
 				return #ok({
-					id = folder_id;
+					id = directory_id;
 					url = Utils.build_resource_url({
-						resource_id = folder_id;
+						resource_id = directory_id;
 						canister_id = canister_id;
 						network = NETWORK;
 						view_mode = #Open;
@@ -141,13 +143,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		switch (resources.get(resource_id)) {
 			case (?resource) {
 				var removed_folders = 0;
-				var removed_resources = 0;
+				var removed_files = 0;
 				// remove leafs
 				if (not List.isNil(resource.leafs)) {
 					// delete leafs
 					for (leaf in List.toIter(resource.leafs)){
-						// leaf is a resource
-						removed_resources:=removed_resources + 1;
+						// leaf is a file becaus subdirectory is not supported now!
+						removed_files:=removed_files + 1;
 						resources.delete(leaf);
 						resource_data := Trie.remove(resource_data, Utils.text_key(leaf), Text.equal).0;
 					}
@@ -163,13 +165,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						case (null) {};
 					};
 				};
-
+				// update counters based on the removed resource type
 				switch (resource.resource_type) {
-					case (#Folder) { removed_folders := removed_folders + 1; };
-					case (#File) { removed_resources := removed_resources + 1; };
+					case (#Directory) { removed_folders := removed_folders + 1; };
+					case (#File) { removed_files := removed_files + 1; };
 				};
-				if (removed_folders > 0) { total_folders := total_folders - removed_folders; };
-				if (removed_resources > 0) { total_resources := total_resources - removed_resources; };
+				// update global var
+				if (removed_folders > 0) { total_directories := total_directories - removed_folders; };
+				if (removed_files > 0) { total_files := total_files - removed_files; };
 				// delete resource details
 				resources.delete(resource_id);
 				// delete from stable memory
@@ -228,10 +231,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Returns folder details by  name not the id
 	* Bytes of the resource are not returned here.
 	*/
-	public query func get_folder_info(name : Text) : async Result.Result<Types.FolderView, Types.Errors> {
+	public query func get_directory_by_name(name : Text) : async Result.Result<Types.DirectoryView, Types.Errors> {
 		let canister_id =  Principal.toText(Principal.fromActor(this));	
-		let folder_id = Utils.hash(canister_id, [name]);
-		switch (resources.get(folder_id)) {
+		let directory_id = Utils.hash(canister_id, [name]);
+		switch (resources.get(directory_id)) {
 			case (?res) {
 				var total_size = 0;
 				for (leaf in List.toIter(res.leafs)) {
@@ -241,19 +244,19 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					};	
 					total_size := total_size + r_size;
 				};
-				let folder_info : Types.FolderView = {
-					id = folder_id;
+				let info : Types.DirectoryView = {
+					id = directory_id;
 					total_files = List.size(res.leafs);
 					total_size = total_size;
 					created = res.created;
 					url = Utils.build_resource_url({
-						resource_id = folder_id;
+						resource_id = directory_id;
 						canister_id = canister_id;
 						network = NETWORK;
 						view_mode = #Open;
 					});
 				};
-				return #ok(folder_info);			
+				return #ok(info);			
 			};
 			case (_) {
 				return #err(#NotFound);
@@ -263,44 +266,44 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	private func _store_resource(payload : [Blob], owner: Principal, resource_args : Types.ResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		// increment counter
-		total_resources  := total_resources + 1;
+		resource_increment  := resource_increment + 1;
 		// resource hex
 		let canister_id = Principal.toText(Principal.fromActor(this));
-		var resource_id = Utils.hash_time_based(canister_id, total_resources);	
+		var resource_id = Utils.hash_time_based(canister_id, resource_increment);	
 		var content_size = 0;
-		// reference to folder id
+		// reference to directory id
 		var parent:?Text = null;
 
-		if (Option.isSome(resource_args.folder)) {
-			let folder = Utils.unwrap(resource_args.folder);
-			let folder_id:Text = Utils.hash(canister_id, [folder]);	
-			// if resource is a part of folder, then name is uniq inside the folder
-			resource_id := Utils.hash(canister_id, [folder, resource_args.name]);	
-			// file already presend in the folder
+		if (Option.isSome(resource_args.directory)) {
+			let directory = Utils.unwrap(resource_args.directory);
+			let directory_id:Text = Utils.hash(canister_id, [directory]);	
+			// if resource is a part of directory, then name is uniq inside the directory
+			resource_id := Utils.hash(canister_id, [directory, resource_args.name]);	
+			// file already presend in the directory
 			if (Option.isSome(resources.get(resource_id))) {
 				// reject
 				return #err(#AlreadyRegistered);
 			};
 
-			switch (resources.get(folder_id)) {
+			switch (resources.get(directory_id)) {
 				case (?f) {
 					f.leafs := List.push(resource_id, f.leafs);
-					ignore resources.replace(folder_id, f);
+					ignore resources.replace(directory_id, f);
 				};
 				case (null) {
-					// save new folder
-					resources.put(folder_id, {
-						resource_type = #Folder;
+					// save new directory
+					resources.put(directory_id, {
+						resource_type = #Directory;
 						var http_headers = [];
 						payload = [];
 						content_size = 0;
 						created = Time.now();
-						name = folder;
+						name = directory;
 						parent = null;
 						var leafs =  List.push(resource_id, null);
 					});
-					parent := ?folder_id;
-					total_folders  := total_folders + 1;
+					parent := ?directory_id;
+					total_directories  := total_directories + 1;
 				};
 			};
 		};
@@ -345,22 +348,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			cycles = Utils.get_cycles_balance();
 			memory_mb = Utils.get_memory_in_mb();
 			heap_mb = Utils.get_heap_in_mb();
-			resources = total_resources;
-			folders = total_folders;
+			files = total_files;
+			directories = total_directories;
 		};
 	};
 
 	public query func number_of_chunks() : async Nat {
 		return chunks.size();
 	};
-
-	public query func number_of_resources() : async Nat {
-		return total_resources;
-	};
-
-	public query func number_of_folders() : async Nat {
-		return total_folders;
-	};	
 
 	public query func get_name() : async Text {
 		return NAME;

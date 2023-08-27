@@ -104,6 +104,27 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	};
 
 	/**
+	* Sign up as a new customer. Allowed only if a caller belongs to the whitelist. 
+	* A new customer receives a "Free tier".
+	*/
+	public shared ({ caller }) func signup_customer (name : Text, description : Text) : async Result.Result<Text, Types.Errors> {
+		if (Option.isSome(Array.find(whitelist_customers, func (x: Principal) : Bool { x == caller }))) {
+			let customer : Types.Customer = {
+				var name = name;
+				var description = description;			
+				identity = caller;
+				tier = #Free;
+				var applications = List.nil();
+				created = Time.now();
+			};
+			customers := Trie.put(customers, Utils.principal_key(caller), Principal.equal, customer).0;
+			return #ok(Principal.toText(caller));
+		} else {
+			return #err(#AccessDenied);
+		}
+	};	
+
+	/**
 	* Registers a new application for already registered customer. Application is assigned to the specified customer.
 	* Allowed only to the owner or operator of the storage service.
 	*/

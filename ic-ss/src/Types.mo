@@ -22,8 +22,8 @@ module {
 		cycles : Int;
 		memory_mb : Int;
 		heap_mb : Int;
-		resources : Nat;
-		folders : Nat;
+		files : Nat;
+		directories : Nat;
 	};
 
 	public type ApprovedCustomer = {
@@ -103,7 +103,7 @@ module {
 
 	public type ResourceType = {
 		#File;
-		#Folder;
+		#Directory;
 	};
 
 	public type ChunkBinding = {
@@ -123,8 +123,8 @@ module {
 	public type ResourceArgs = {
 		content_type : Text;
 		name : Text;
-		// input argument, folder name
-		folder : ?Text;
+		// input argument, directory name
+		directory : ?Text;
 	};
 
 	public type Resource = {
@@ -153,7 +153,7 @@ module {
 		url : Text;
 	};
 
-	public type FolderView = {
+	public type DirectoryView = {
 		id : Text;
 		total_files : Nat;
 		total_size : Nat;
@@ -230,7 +230,7 @@ module {
 
     public type DataBucketActor = actor {
         withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
-		new_folder : shared (name : Text) -> async Result.Result<IdUrl, Errors>;
+		new_directory : shared (name : Text) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;		
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
     };			
