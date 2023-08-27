@@ -26,10 +26,17 @@ module {
 		folders : Nat;
 	};
 
+	public type ApprovedCustomer = {
+		// some status could be added here later
+		identity : Principal;
+		created: Time.Time;
+	};
+
 	public type Customer = {
 		var name : Text;
 		var description : Text;
 		identity : Principal;
+		tier : ServiceTier;
 		// principal id
 		var applications : List.List<Text>;
 		created: Time.Time;
@@ -39,6 +46,7 @@ module {
 		name : Text;
 		description : Text;
 		identity : Principal;
+		tier : ServiceTier;
 		applications : [Text];
 		created: Time.Time;
 	};	
@@ -74,6 +82,13 @@ module {
 		active_bucket : Text;
 		created : Time.Time;
 	};	
+
+	// differentiation of the opportuties per a customer
+	public type ServiceTier = {
+		#Free;
+		#Standard;
+		#Advanced;
+	};
 
 	public type Network = {
         #IC;
@@ -114,11 +129,10 @@ module {
 
 	public type Resource = {
 		resource_type : ResourceType;
-		http_headers : [(Text, Text)];
+		var http_headers : [(Text, Text)];
 		content_size : Nat;
 		created : Int;
 		name : Text;
-		owner : Principal;
 		// folder reference (hash, not the name)
 		parent : ?Text;
 		// references to other resources in case of "folder type"
@@ -131,7 +145,6 @@ module {
 		content_size : Nat;
 		created : Int;
 		name : Text;
-		owner : Principal;
 		url : Text;
 	};
 
@@ -150,7 +163,6 @@ module {
 
 	public type ApplicationServiceArgs = {
 		network : Network;
-		owner : Principal;
 		operators : [Principal];
 		cycles_app_init : Nat;
 		cycles_bucket_init : Nat;
@@ -158,10 +170,10 @@ module {
 
 	public type ApplicationArgs = {
 		network : Network;
+		// tier or the opportunitites
+		tier : ServiceTier;
 		// operators to work with a repo
 		operators : [Principal];
-		// max allowed repos per application
-		allowed_repositories : Nat;
 		// initial amount of cycles for any new bucket
 		cycles_bucket_init : Nat;
 	};	

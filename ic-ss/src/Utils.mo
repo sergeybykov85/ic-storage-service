@@ -12,9 +12,11 @@ import Nat "mo:base/Nat";
 import Nat8 "mo:base/Nat8";
 import Option "mo:base/Option";
 import Prelude "mo:base/Prelude";
+import Principal "mo:base/Principal";
 import Prim "mo:⛔";
 import Text "mo:base/Text";
 import Time "mo:base/Time";
+import Trie "mo:base/Trie";
 
 import Types "./Types";
 import SHA256 "./Sha256";
@@ -42,6 +44,10 @@ module {
         network : Types.Network;
         view_mode : Types.ViewMode;
     };
+
+    public func principal_key(id: Principal) : Trie.Key<Principal> = { key = id; hash = Principal.hash id };
+
+    public func text_key(id: Text) : Trie.Key<Text> = { key = id; hash = Text.hash id };
 
     /**
     * Builds resource url based on specified params (id, network, view mode)
@@ -109,7 +115,6 @@ module {
             content_size = info.content_size;
             created = info.created;
             name = info.name;
-            owner = info.owner;
             url = build_resource_url({
 				resource_id = id;
 				canister_id = canister_id;
@@ -127,6 +132,7 @@ module {
             name = info.name;
             description = info.description;
             identity = info.identity;
+            tier = info.tier;
             applications = List.toArray(info.applications);
 			created = info.created;
         };

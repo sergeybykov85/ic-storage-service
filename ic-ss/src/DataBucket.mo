@@ -1,7 +1,6 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Cycles "mo:base/ExperimentalCycles";
-import Buffer "mo:base/Buffer";
 import Iter "mo:base/Iter";
 import List "mo:base/List";
 import Map "mo:base/HashMap";
@@ -34,8 +33,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	// file content is stored in the stable memory 
 	stable var resource_data : Trie.Trie<Text, [Blob]> = Trie.empty();
 	
+	// number of all res
 	stable var total_resources : Nat = 0;
+	// number of directories
 	stable var total_folders : Nat = 0;
+	// increment counter, internal needs
 	stable var chunk_counter : Nat = 0;
 	// -------------------------------------------------
 
@@ -48,24 +50,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	// binding between chunks
 	private var chunk_bindings = Map.HashMap<Text, Types.ChunkBinding>(0, Text.equal, Text.hash);
 
-
-    private func resource_data_get(id : Text) : ?[Blob] = Trie.get(resource_data, resource_key(id), Text.equal);
-    
-	private func resource_data_put(id : Text, payload : [Blob]) {
-        resource_data := Trie.put(resource_data, resource_key(id), Text.equal, payload).0;
-    };
-
-	private func resource_data_delete(id : Text) {
-        resource_data := Trie.remove(resource_data, resource_key(id), Text.equal).0;
-    };		
-
-	private func resource_key(id: Text) : Trie.Key<Text> = { key = id; hash = Text.hash id };
-
 	/**
 	* Applies list of operators for the storage service
 	*/
-    public shared (msg) func apply_operators(ids: [Principal]) {
-    	assert(msg.caller == OWNER);
+    public shared ({ caller }) func apply_operators(ids: [Principal]) {
+    	assert(caller == OWNER);
     	operators := ids;
     };
 
@@ -120,15 +109,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (null) {
 				resources.put(folder_id, {
 					resource_type = #Folder;
-					http_headers = [];
+					var http_headers = [];
 					payload = [];
 					content_size = 0;
 					created = Time.now();
 					name = folder;
 					parent = null;
 					var leafs = List.nil();
-					owner = caller;
-				});
+					});
 				total_folders  := total_folders + 1;
 				return #ok({
 					id = folder_id;
@@ -147,54 +135,72 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* If it is a file and it is under the folder, then file is removed and the leafs of the folder is updated.
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func delete_resource(id : Text) : async Result.Result<(), Types.Errors> {
+	public shared ({ caller }) func delete_resource(resource_id : Text) : async Result.Result<(), Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));
 
-		switch (resources.get(id)) {
+		switch (resources.get(resource_id)) {
 			case (?resource) {
-				if (resource.owner == caller) {
-					var removed_folders = 0;
-					var removed_resources = 0;
-					// remove leafs
-					if (not List.isNil(resource.leafs)) {
-						// delete leafs
-						for (leaf in List.toIter(resource.leafs)){
-							// leaf is a resource
-							removed_resources:=removed_resources + 1;
-							resources.delete(leaf);
-							resource_data_delete(leaf);
-						}
-					};
-					// check if it is a leaf, need to update the folder and exclude a leaf
-					if (Option.isSome(resource.parent)) {
-						let f_id = Utils.unwrap(resource.parent);
-						switch (resources.get(f_id)) {
-							case (?f) {
-								f.leafs := List.mapFilter<Text, Text>(f.leafs,
-									func lf = if (lf == f_id) { null } else { ?lf });
-							};
-							case (null) {};
-						};
-					};
-
-					switch (resource.resource_type) {
-						case (#Folder) { removed_folders := removed_folders + 1; };
-						case (#File) { removed_resources := removed_resources + 1; };
-					};
-					if (removed_folders > 0) { total_folders := total_folders - removed_folders; };
-					if (removed_resources > 0) { total_resources := total_resources - removed_resources; };
-					resources.delete(id);
-					resource_data_delete(id);
-					return #ok();
-				} else {
-					return #err(#NotAuthorized);
+				var removed_folders = 0;
+				var removed_resources = 0;
+				// remove leafs
+				if (not List.isNil(resource.leafs)) {
+					// delete leafs
+					for (leaf in List.toIter(resource.leafs)){
+						// leaf is a resource
+						removed_resources:=removed_resources + 1;
+						resources.delete(leaf);
+						resource_data := Trie.remove(resource_data, Utils.text_key(leaf), Text.equal).0;
+					}
 				};
+				// check if it is a leaf, need to update the folder and exclude a leaf
+				if (Option.isSome(resource.parent)) {
+					let f_id = Utils.unwrap(resource.parent);
+					switch (resources.get(f_id)) {
+						case (?f) {
+							f.leafs := List.mapFilter<Text, Text>(f.leafs,
+								func lf = if (lf == f_id) { null } else { ?lf });
+						};
+						case (null) {};
+					};
+				};
+
+				switch (resource.resource_type) {
+					case (#Folder) { removed_folders := removed_folders + 1; };
+					case (#File) { removed_resources := removed_resources + 1; };
+				};
+				if (removed_folders > 0) { total_folders := total_folders - removed_folders; };
+				if (removed_resources > 0) { total_resources := total_resources - removed_resources; };
+				// delete resource details
+				resources.delete(resource_id);
+				// delete from stable memory
+				resource_data := Trie.remove(resource_data, Utils.text_key(resource_id), Text.equal).0;
+				return #ok();
 			};
 			case (_) {
 				return #err(#NotFound);
 			};
 		};
 	};
+
+
+	/**
+	* Applies http headers for the specified resource (override)
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func apply_headers(resource_id : Text, http_headers: [Types.NameValue]) : async Result.Result<(), Types.Errors> {
+		assert(caller == OWNER or _is_operator(caller));
+
+		switch (resources.get(resource_id)) {
+			case (?resource) {
+				resource.http_headers:= Array.map<Types.NameValue, (Text, Text)>(http_headers, func h = (h.name, h.value) );
+				ignore resources.replace(resource_id, resource);
+				return #ok();
+			};
+			case (_) {
+				return #err(#NotFound);
+			};
+		};
+	};	
 
 	public query func get_all_resources() : async [Types.ResourceView] {
 		let canister_id =  Principal.toText(Principal.fromActor(this));
@@ -219,7 +225,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	/**
-	* Returns folder details by  name.
+	* Returns folder details by  name not the id
 	* Bytes of the resource are not returned here.
 	*/
 	public query func get_folder_info(name : Text) : async Result.Result<Types.FolderView, Types.Errors> {
@@ -262,6 +268,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		let canister_id = Principal.toText(Principal.fromActor(this));
 		var resource_id = Utils.hash_time_based(canister_id, total_resources);	
 		var content_size = 0;
+		// reference to folder id
 		var parent:?Text = null;
 
 		if (Option.isSome(resource_args.folder)) {
@@ -284,14 +291,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					// save new folder
 					resources.put(folder_id, {
 						resource_type = #Folder;
-						http_headers = [];
+						var http_headers = [];
 						payload = [];
 						content_size = 0;
 						created = Time.now();
 						name = folder;
 						parent = null;
 						var leafs =  List.push(resource_id, null);
-						owner = owner;
 					});
 					parent := ?folder_id;
 					total_folders  := total_folders + 1;
@@ -305,19 +311,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 		let res : Types.Resource = {
 			resource_type = #File;
-			http_headers = [("Content-Type", resource_args.content_type)];
+			var http_headers = [("Content-Type", resource_args.content_type)];
 			content_size = content_size;
 			created = Time.now();
 			name = resource_args.name;
 			parent = parent;
 			var leafs = null;
-			owner = owner;
 		};
 
 		// resouce mapping
 		resources.put(resource_id, res);
 		// store data
-		resource_data_put (resource_id, payload);
+		resource_data := Trie.put(resource_data, Utils.text_key(resource_id), Text.equal, payload).0;
 
 		return #ok({
 			id = resource_id;

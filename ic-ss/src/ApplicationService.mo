@@ -8,6 +8,7 @@ import Nat "mo:base/Nat";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Time "mo:base/Time";
+import Trie "mo:base/Trie";
 import Timer "mo:base/Timer";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
@@ -17,8 +18,6 @@ import Types "./Types";
 import Utils "./Utils";
 
 shared (installation) actor class ApplicationService(initArgs : Types.ApplicationServiceArgs) = this {
-	// it is a default contant. this will be managed data soon
-	stable let DEF_REPO_PER_APP = 2;
 
 	// owner has a super power, do anything inside this actor and assign any list of operators
     stable let OWNER = installation.caller;
@@ -26,35 +25,66 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators = initArgs.operators;
 
-    private stable var application_state : [(Principal, Types.CustomerApp)] = [];
-	private var applications = Map.HashMap<Principal, Types.CustomerApp>(0, Principal.equal, Principal.hash);
+	// list of customers who can sign up and get a "free tier";
+	stable var whitelist_customers : [Principal] = [];
 
-    private stable var customer_state : [(Principal, Types.Customer)] = [];
-	private var customers = Map.HashMap<Principal, Types.Customer>(0, Principal.equal, Principal.hash);
+	stable var applications : Trie.Trie<Principal, Types.CustomerApp> = Trie.empty();
+	stable var customers : Trie.Trie<Principal, Types.Customer> = Trie.empty();
 
-	private let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
-
+	let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
 
 	public shared query func initParams() : async (Types.ApplicationServiceArgs) {
 		return initArgs;
-	};	
+	};
+
+    private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
+    private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
+
 	/**
-	* Applies list of operators for the storage service
+	* Applies the list of operators for the storage service.
+	* Allowed only to the owner user
 	*/
-    public shared (msg) func apply_operators(ids: [Principal]) {
-    	assert(msg.caller == OWNER);
+    public shared ({ caller }) func apply_operators(ids: [Principal]) {
+    	assert(caller == OWNER);
     	operators := ids;
     };
+
+	/**
+	* Applies (override) the list of customers who can sign up and get a free tier access immediately. 
+	* Allowed only to the owner user or operator.
+	*/
+    public shared ({caller}) func apply_whitelist_customers(ids: [Principal]) {
+		assert(caller == OWNER or _is_operator(caller));
+    	whitelist_customers := ids;
+    };
+
+	/**
+	* Adds the list of customers who can sign up and get a free tier access immediately. The previous list remains availaible.
+	* Allowed only to the owner user or operator.
+	*/
+    public shared ({ caller }) func add_whitelist_customers(ids: [Principal]) {
+		assert(caller == OWNER or _is_operator(caller));
+		// Array.append is deprecated and it gives a warning
+		let capacity : Nat = Array.size(whitelist_customers) + Array.size(ids);
+		let res = Buffer.Buffer<Principal>(capacity);
+		for (p in whitelist_customers.vals()) { res.add(p); };
+		for (p in ids.vals()) { res.add(p); };
+    	whitelist_customers := Buffer.toArray(res);
+    };	
 
 	public shared ({ caller }) func access_list() : async (Types.AccessList) {
 		assert(caller == OWNER or _is_operator(caller));
 		return { owner = OWNER; operators = operators }
 	};
 
-	public shared ({ caller }) func register_customer (name : Text, description : Text, identity : Principal) : async Result.Result<Text, Types.Errors> {
+	/**
+	* Registers a new customer.
+	* Allowed only to the owner or operator of the storage service.
+	*/
+	public shared ({ caller }) func register_customer (name : Text, description : Text, identity : Principal, tier : Types.ServiceTier) : async Result.Result<Text, Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));
 
-		switch (customers.get(identity)) {
+		switch (customer_get(identity)) {
 			case (?customer) {
 				return #err(#AlreadyRegistered);
 			};
@@ -63,36 +93,48 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					var name = name;
 					var description = description;			
 					identity = identity;
+					tier = tier;
 					var applications = List.nil();
 					created = Time.now();
 				};
-				customers.put(identity, customer);
+				customers := Trie.put(customers, Utils.principal_key(identity), Principal.equal, customer).0;
 				return #ok(Principal.toText(identity));
 			};
 		}
-
 	};
 
-	public shared ({ caller }) func register_application_for (name : Text, description : Text, to : Principal) : async Result.Result<Text, Types.Errors> {
+	/**
+	* Registers a new application for already registered customer. Application is assigned to the specified customer.
+	* Allowed only to the owner or operator of the storage service.
+	*/
+	public shared ({ caller }) func register_application_for (name : Text, description : Text, customer : Principal) : async Result.Result<Text, Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));
-		await _register_application(name, description, to, null);
+		await _register_application(name, description, customer, null);
 	};
 
+	/**
+	* Registers a new application for already registered customer. Customer should call this method to register an app.
+	* The idea is so that caller is a customer.
+	*/
 	public shared ({ caller }) func register_application (name : Text, description : Text) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		// if caller is not a customer then method returns #err(NotRegistered)
 		await _register_application(name, description, caller, null);
 	};
 
+	/**
+	* Deletes the existing application
+	* Allowed only to the owner of the certain application
+	*/
 	public shared ({ caller }) func delete_application (id : Text) : async Result.Result<Text, Types.Errors> {
-		// only repository owner or application owner can delete
+		// only application owner can delete its app
 		let app_principal = Principal.fromText(id);
-		switch (applications.get(app_principal)) {
+		switch (application_get(app_principal)) {
 			case (?app) {
-				// access control : application owner or repository owner
-				//if (app.owner != caller) return #err(#NotAuthorized);
+				// access control : application owner
+				if (app.owner != caller) return #err(#NotAuthorized);
 				await management_actor.stop_canister({canister_id = app_principal});
 				await management_actor.delete_canister({canister_id = app_principal});
-				applications.delete(app_principal);
+				applications := Trie.remove(applications, Utils.principal_key(app_principal), Principal.equal).0;
 				#ok(id);
 			};
 			case (null) {
@@ -102,15 +144,14 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	};	
 
 	private func _register_application (name : Text, description : Text, to : Principal, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
-		switch (customers.get(to))	{
+		switch (customer_get(to))	{
 			case (?customer) {
 				let cycles_assign = Option.get(cycles, initArgs.cycles_app_init);
 				Cycles.add(cycles_assign);
 				let application_actor = await Application.Application({
+					tier = customer.tier;
 					// default cycles value to be used for any new bucket
 					cycles_bucket_init = initArgs.cycles_bucket_init;
-					// will be reworked to avoid of a constant
-					allowed_repositories = DEF_REPO_PER_APP;
 					operators = [to];
 					network = initArgs.network;
 				});
@@ -123,7 +164,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					owner = to;
 					created = Time.now();
 				};
-				applications.put(application_principal, app);
+				applications := Trie.put(applications, Utils.principal_key(application_principal), Principal.equal, app).0;
 				customer.applications := List.push(app_id, customer.applications);
 
 				return #ok(app_id);
@@ -140,12 +181,16 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
     };	
 
 	public query func total_customers() : async Nat {
-		return customers.size();
+		return Trie.size(customers);
 	};
 
 	public query func total_apps() : async Nat {
-		return applications.size();
+		return Trie.size(applications);
 	};
+
+	public query func get_whitelist_customer_records() : async [Principal] {
+		return whitelist_customers
+	};	
 
 	/**
 	* Returns customer apps for the specified customer.
@@ -162,13 +207,13 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
   	};
 
 	private func _get_application_records_for(customer : Principal) : [Types.CustomerAppView] {
-    	switch (customers.get(customer)) {
+    	switch (customer_get(customer)) {
         	case (?c) {
 				let res = Buffer.Buffer<Types.CustomerAppView>(List.size(c.applications));
 
 				for (app_id in List.toIter(c.applications)) {
 					let app_principal = Principal.fromText(app_id);
-					switch (applications.get(app_principal)){
+					switch (application_get(app_principal)){
 						case (?app) res.add(Utils.customerApp_view(app_principal, app));
 						case (null) {
 							// nothing
@@ -185,7 +230,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Returns all registered customer apps.
 	*/	
 	public shared query func get_application_records() : async [Types.CustomerAppView] {
-		return Iter.toArray(Iter.map (applications.entries(), 
+		return Iter.toArray(Iter.map (Trie.iter(applications), 
 			func (i: (Principal, Types.CustomerApp)): Types.CustomerAppView {Utils.customerApp_view(i.0, i.1)}));
 	};
 
@@ -193,20 +238,14 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Returns all registered customers.
 	*/
 	public query func get_customer_records() : async [Types.CustomerView] {
-		return Iter.toArray(Iter.map (customers.entries(), 
+		return Iter.toArray(Iter.map (Trie.iter(customers), 
 			func (i: (Principal, Types.Customer)): Types.CustomerView {Utils.customer_view(i.1)}));
 	};
-	
+
 	system func preupgrade() {
-		application_state := Iter.toArray(applications.entries());
-		customer_state := Iter.toArray(customers.entries());
 	};
 
 	system func postupgrade() {
-		applications := Map.fromIter<Principal, Types.CustomerApp>(application_state.vals(), application_state.size(), Principal.equal, Principal.hash);
-		customers := Map.fromIter<Principal, Types.Customer>(customer_state.vals(), customer_state.size(), Principal.equal, Principal.hash);
-		application_state:=[];
-		customer_state:=[];
 	};
 
     public shared func wallet_receive() {
