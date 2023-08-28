@@ -8,6 +8,8 @@ Here is a simple illustration of the backend canisters https://dcm-swiss-demo.s3
 
 ***
 ## Attention:
+_The share source code uses Sha256.mo library. The code of this file is not modified. Maybe a little later, the "vessel package management tool" will be applied for the project to include such libaries like sha256 as a dependency instead of file copying approach._
+
 Chunk upload, http endpoint are not a part of the Milestone#1. It will be delivered
 in the next milestone as it was declared. 
 Some methods and data model were declared but will be utilized in the milestone#2.
