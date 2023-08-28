@@ -61,7 +61,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func register_repository (name : Text, description : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		let next_id = Trie.size(repositories) + 1;
 		let cycles_assign = Option.get(cycles, cycles_bucket_init);
 		
@@ -93,13 +93,16 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_repository (repository_id : Text) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));		
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				for (bucket_id in List.toIter(repo.buckets)){
 					let bucket = Principal.fromText(bucket_id);
 					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
-					// send cycles to "application canister" in case of removing a bucket canister
+					/**
+					*  send cycles to "application canister" in case of removing a bucket canister.
+					*  right now, remainder_cycles is a constant, the idea is to leave some funds to process the request
+					*/
 					await bucket_actor.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
@@ -119,7 +122,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_bucket (repository_id : Text, bucket_id: Text) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				if (repo.active_bucket == bucket_id) return #err(#OperationNotAllowed);
@@ -149,10 +152,11 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func new_bucket (repository_id : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let cycles_assign = Option.get(cycles, cycles_bucket_init);
+				// first version of the name. Other format might be applied later 
 				let bucket_name = debug_show({
 					application = Principal.fromActor(this);
 					repository_name = repo.name;
@@ -175,7 +179,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func set_active_bucket (repository_id : Text, bucket_id : Text) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				switch (List.find(repo.buckets, func (x: Text) : Bool { x == bucket_id })) {
@@ -199,7 +203,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func new_directory(repository_id : Text, name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));		
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
@@ -216,7 +220,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func store_resource(repository_id : Text, content : Blob, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
@@ -227,6 +231,23 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			};
 		}
 	};
+
+	/**
+	* Deletes a resource from the specified repository
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func delete_resource(repository_id : Text, resource_id : Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.delete_resource(resource_id);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};	
 
 	public query func get_repository_records() : async [Types.RepositoryView] {
 		return Iter.toArray(Iter.map (Trie.iter(repositories), 

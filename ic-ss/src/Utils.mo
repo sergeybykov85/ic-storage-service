@@ -65,7 +65,9 @@ module {
         };
     };
     /**
-    * Generates hash based on a prefix, current tine and suffix (counter)
+    * Generates hash based on a prefix, current time and suffix (counter).
+    * It is used to generate ids.
+    * Since the time it is a part pf the hash, then it is difficult to preditc the next id
     */
     public func hash_time_based (prefix : Text, suffix : Nat) : Text {
         let message = SHA256.sha256(Blob.toArray(Text.encodeUtf8(prefix # Int.toText(Time.now()) # Nat.toText(suffix))));

@@ -83,7 +83,11 @@ module {
 		created : Time.Time;
 	};	
 
-	// differentiation of the opportuties per a customer
+	/**
+	* Trier represents the list of opportunities.
+	* In the first version there is no difference. But limits will be applied based on the tier.
+	* (number of apps, number of repos, buckets etc)
+	*/
 	public type ServiceTier = {
 		#Free;
 		#Standard;
@@ -162,10 +166,14 @@ module {
 	};		
 
 	public type ApplicationServiceArgs = {
+		// network that propagated to any application
 		network : Network;
+		// list of operators to work with the service
 		operators : [Principal];
-		cycles_app_init : Nat;
-		cycles_bucket_init : Nat;
+		// default cycles sent to any new application
+		cycles_app_init : ?Nat;
+		// default cycles sent to a new bucket (application --> repo)
+		cycles_bucket_init : ?Nat;
 	};
 
 	public type ApplicationArgs = {
@@ -232,6 +240,7 @@ module {
         withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
 		new_directory : shared (name : Text) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;		
+		delete_resource : shared (id : Text) -> async Result.Result<(), Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
     };			
 

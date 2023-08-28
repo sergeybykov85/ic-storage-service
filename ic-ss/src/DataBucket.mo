@@ -47,9 +47,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	// resource information (aka files/folders)
 	private var resources = Map.HashMap<Text, Types.Resource>(0, Text.equal, Text.hash);
-	// chunks of files
+	// chunks of files (id to chunk)
 	private var chunks = Map.HashMap<Text, Types.ResourceChunk>(0, Text.equal, Text.hash);
-	// binding between chunks
+	// binding between chunks (logical name and chunk)
 	private var chunk_bindings = Map.HashMap<Text, Types.ChunkBinding>(0, Text.equal, Text.hash);
 
 	/**
@@ -100,7 +100,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func new_directory(name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
 		let canister_id = Principal.toText(Principal.fromActor(this));				
 		let directory_id = Utils.hash(canister_id, [name]);		
@@ -138,7 +138,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func delete_resource(resource_id : Text) : async Result.Result<(), Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
 		switch (resources.get(resource_id)) {
 			case (?resource) {
@@ -191,7 +191,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func apply_headers(resource_id : Text, http_headers: [Types.NameValue]) : async Result.Result<(), Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
 		switch (resources.get(resource_id)) {
 			case (?resource) {
@@ -267,8 +267,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	private func _store_resource(payload : [Blob], owner: Principal, resource_args : Types.ResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		// increment counter
 		resource_increment  := resource_increment + 1;
-		// resource hex
 		let canister_id = Principal.toText(Principal.fromActor(this));
+		// generated resource id
 		var resource_id = Utils.hash_time_based(canister_id, resource_increment);	
 		var content_size = 0;
 		// reference to directory id
@@ -324,7 +324,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 		// resouce mapping
 		resources.put(resource_id, res);
-		// store data
+		// store data in stable var
 		resource_data := Trie.put(resource_data, Utils.text_key(resource_id), Text.equal, payload).0;
 
 		return #ok({

@@ -29,16 +29,17 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	stable var whitelist_customers : [Principal] = [];
 
 	stable var applications : Trie.Trie<Principal, Types.CustomerApp> = Trie.empty();
+
 	stable var customers : Trie.Trie<Principal, Types.Customer> = Trie.empty();
+
+	let CYCLES_APP_INIT = Option.get(initArgs.cycles_app_init, 90_000_000_000);
+	let CYCLES_BUCKET_INIT = Option.get(initArgs.cycles_bucket_init, 40_000_000_000);
 
 	let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
 
 	public shared query func initParams() : async (Types.ApplicationServiceArgs) {
 		return initArgs;
 	};
-
-    private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
-    private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
 
 	/**
 	* Applies the list of operators for the storage service.
@@ -82,7 +83,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Allowed only to the owner or operator of the storage service.
 	*/
 	public shared ({ caller }) func register_customer (name : Text, description : Text, identity : Principal, tier : Types.ServiceTier) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
 		switch (customer_get(identity)) {
 			case (?customer) {
@@ -109,16 +110,23 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	*/
 	public shared ({ caller }) func signup_customer (name : Text, description : Text) : async Result.Result<Text, Types.Errors> {
 		if (Option.isSome(Array.find(whitelist_customers, func (x: Principal) : Bool { x == caller }))) {
-			let customer : Types.Customer = {
-				var name = name;
-				var description = description;			
-				identity = caller;
-				tier = #Free;
-				var applications = List.nil();
-				created = Time.now();
+
+			switch (customer_get(caller)) {
+				case (?customer) { return #err(#AlreadyRegistered); };
+				case (null) {
+					// register customer with a Free tier
+					let customer : Types.Customer = {
+						var name = name;
+						var description = description;			
+						identity = caller;
+						tier = #Free;
+						var applications = List.nil();
+						created = Time.now();
+					};
+					customers := Trie.put(customers, Utils.principal_key(caller), Principal.equal, customer).0;
+					return #ok(Principal.toText(caller));
+				};
 			};
-			customers := Trie.put(customers, Utils.principal_key(caller), Principal.equal, customer).0;
-			return #ok(Principal.toText(caller));
 		} else {
 			return #err(#AccessDenied);
 		}
@@ -129,7 +137,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Allowed only to the owner or operator of the storage service.
 	*/
 	public shared ({ caller }) func register_application_for (name : Text, description : Text, customer : Principal) : async Result.Result<Text, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		await _register_application(name, description, customer, null);
 	};
 
@@ -167,12 +175,12 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	private func _register_application (name : Text, description : Text, to : Principal, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		switch (customer_get(to))	{
 			case (?customer) {
-				let cycles_assign = Option.get(cycles, initArgs.cycles_app_init);
+				let cycles_assign = Option.get(cycles, CYCLES_APP_INIT);
 				Cycles.add(cycles_assign);
 				let application_actor = await Application.Application({
 					tier = customer.tier;
 					// default cycles value to be used for any new bucket
-					cycles_bucket_init = initArgs.cycles_bucket_init;
+					cycles_bucket_init = CYCLES_BUCKET_INIT;
 					operators = [to];
 					network = initArgs.network;
 				});
@@ -197,8 +205,11 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		}
 	};
 
-	private func _is_operator(id: Principal) : Bool {
-    	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
+	/**
+	* Checks if entity belongs to the whitelist set
+	*/	
+	public query func is_in_whitelist(id: Principal) : async Bool {
+    	Option.isSome(Array.find(whitelist_customers, func (x: Principal) : Bool { x == id }))
     };	
 
 	public query func total_customers() : async Nat {
@@ -245,7 +256,14 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
         	};
         	case (_) {[];};
       	};
-  	};	
+  	};
+
+    private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
+    private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
+
+	private func _is_operator(id: Principal) : Bool {
+    	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
+    };
 
 	/**
 	* Returns all registered customer apps.
