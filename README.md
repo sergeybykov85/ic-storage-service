@@ -7,6 +7,12 @@ So one of the intentions is to make the IC-based storage solution as an "abstrac
 Here is a simple illustration of the backend canisters https://dcm-swiss-demo.s3.us-west-1.amazonaws.com/IC/IC_based_storage_for_dcm.jpg
 
 ***
+## Attention:
+Chunk upload, http endpoint are not a part of the Milestone#1. It will be delivered
+in the next milestone as it was declared. 
+Some methods and data model were declared but will be utilized in the milestone#2.
+
+***
 # DONE:
 ## Milestone 1 - Extend the concept of the IMU NFT component and run the demo (Casper mainnet)
 
@@ -45,19 +51,11 @@ Data bucket canister supports following basic operations (approximately list and
     * Getting resource details by its id and getting direcotry details by its name
     * Model of http headers  which could be modified (access control) which might be used while processing http query request
 
-***
-## Attention:
-Chunk upload, http endpoint are not a part of the Milestone#1. It will be delivered
-in the next milestone as it was declared. 
-Some methods and data model were declared but will be utilized in the milestone#2.
-
 
 ***
 
 # TODO:
 ## Milestone 2 
-
-***
 
 ***
 
