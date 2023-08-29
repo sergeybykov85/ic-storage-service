@@ -1,4 +1,5 @@
 # IC Grant Delivery
+## IC-based storage service
 
 ## Preface
 All 3 milestones are closely connected and it is an incremental development of the IC-based storage service (ic-ss) that should facilitate applications from the DCM ecosystem and its partner services. This storage service is intended to be extended later because of integration "frontend canisters and various flows" in the DCM Apps. The same storage service could be used for "different partner's services as well". 
@@ -16,7 +17,7 @@ Some methods and data model were declared but will be utilized in the milestone#
 
 ***
 # DONE:
-## Milestone 1 - Extend the concept of the IMU NFT component and run the demo (Casper mainnet)
+## Milestone 1
 
 1. [Concept of the main canisters]
 _Defined the concept of three canisters and relations between them : ApplicationService, Application, DataBucket._
