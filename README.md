@@ -19,7 +19,7 @@ Some methods and data model were declared but will be utilized in the milestone#
 ## Milestone 1 - Extend the concept of the IMU NFT component and run the demo (Casper mainnet)
 
 1. [Concept of the main canisters]
-_Defined the concept of three canisters : ApplicationService, Application, DataBucket._
+_Defined the concept of three canisters and relations between them : ApplicationService, Application, DataBucket._
 
 2. [Implementation the basic methods and support of dynamic canister creation].
 _Only main canister ApplicationService is deployed from dfx command line. Application canister is created by the ApplicationService canitser based on the logic. And DataBucket canister is created by Application canister according to the logic._
@@ -42,15 +42,14 @@ _Only main canister ApplicationService is deployed from dfx command line. Applic
     * Setting a new active bucket
 
 5. [Basic model and opperations for DataBucket canister] 
-Data bucket canister supports following basic operations (approximately list and naming)
     * Differentiation of the resources into files and directories
-    * Directory allows to group set of files due any reason
+    * Directory entity allows to group the list files due any reason
     * Directory is an optional
     * Files inside the directory should be uniq by its  names. Directory name is an uniq
     * Subdirectory is not supported now
     * Opportunity to store a file (till 2mb), delete it.
     * Opportunity to delete a directory with all files.
-    * Getting resource details by its id and getting direcotry details by its name
+    * Getting the resource details by its id and getting a direcotry details by its name
     * Model of http headers  which could be modified (access control) which might be used while processing http query request
 
 
