@@ -56,10 +56,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	/**
 	* Applies list of operators for the storage service
 	*/
-    public shared ({ caller }) func apply_operators(ids: [Principal]) {
-    	assert(caller == OWNER);
-    	operators := ids;
-    };
+	public shared ({ caller }) func apply_operators(ids: [Principal]) {
+		assert(caller == OWNER);
+		operators := ids;
+	};
 
 	public shared ({ caller }) func access_list() : async (Types.AccessList) {
 		assert(caller == OWNER or _is_operator(caller));
@@ -495,10 +495,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		chunk_state:=[];
 	};
 
-    public shared func wallet_receive() {
-      	let amount = Cycles.available();
-      	ignore Cycles.accept(amount);
-    };
+  	public shared func wallet_receive() {
+    	let amount = Cycles.available();
+    	ignore Cycles.accept(amount);
+  	};
 	
   	public query func available_cycles() : async Nat {
     	return Cycles.balance();

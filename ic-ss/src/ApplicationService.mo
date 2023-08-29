@@ -46,7 +46,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Allowed only to the owner user
 	*/
     public shared ({ caller }) func apply_operators(ids: [Principal]) {
-    	assert(caller == OWNER);
+		assert(caller == OWNER);
     	operators := ids;
     };
 
@@ -64,12 +64,12 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	* Allowed only to the owner user or operator.
 	*/
     public shared ({ caller }) func add_whitelist_customers(ids: [Principal]) {
-		assert(caller == OWNER or _is_operator(caller));
+    	assert(caller == OWNER or _is_operator(caller));
 		// Array.append is deprecated and it gives a warning
-		let capacity : Nat = Array.size(whitelist_customers) + Array.size(ids);
-		let res = Buffer.Buffer<Principal>(capacity);
-		for (p in whitelist_customers.vals()) { res.add(p); };
-		for (p in ids.vals()) { res.add(p); };
+    	let capacity : Nat = Array.size(whitelist_customers) + Array.size(ids);
+    	let res = Buffer.Buffer<Principal>(capacity);
+    	for (p in whitelist_customers.vals()) { res.add(p); };
+    	for (p in ids.vals()) { res.add(p); };
     	whitelist_customers := Buffer.toArray(res);
     };	
 
@@ -281,16 +281,16 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 			func (i: (Principal, Types.Customer)): Types.CustomerView {Utils.customer_view(i.1)}));
 	};
 
-	system func preupgrade() {
+	system func preupgrade() { 
 	};
 
 	system func postupgrade() {
 	};
 
-    public shared func wallet_receive() {
-      	let amount = Cycles.available();
-      	ignore Cycles.accept(amount);
-    };
+  	public shared func wallet_receive() {
+    	let amount = Cycles.available();
+    	ignore Cycles.accept(amount);
+  	};
 	
   	public query func available_cycles() : async Nat {
     	return Cycles.balance();

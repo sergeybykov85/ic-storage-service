@@ -341,18 +341,18 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		return Principal.toText(bucket_principal);
 	};	
 
-	system func preupgrade() {
+	system func preupgrade() { 
 	};
 
 	system func postupgrade() {
 	};
 	
-    public shared func wallet_receive() {
-      	let amount = Cycles.available();
-      	ignore Cycles.accept(amount);
-    };
+  	public shared func wallet_receive() {
+    	let amount = Cycles.available();
+    	ignore Cycles.accept(amount);
+  	};
 	
-  	public query func available_cycles() : async Nat {
-    	return Cycles.balance();
+	public query func available_cycles() : async Nat {
+		return Cycles.balance();
   	};	
 };
