@@ -3,6 +3,7 @@ import Blob "mo:base/Blob";
 import Cycles "mo:base/ExperimentalCycles";
 import Iter "mo:base/Iter";
 import List "mo:base/List";
+import Buffer "mo:base/Buffer";
 import Map "mo:base/HashMap";
 
 import Nat "mo:base/Nat";
@@ -67,12 +68,57 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	/**
 	* Stores a resource (till 2 mb)
-	* Allowed only to the owner or operator of the app.
+	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func store_resource (content : Blob, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		assert(caller == OWNER or _is_operator(caller));
 		_store_resource ([content], caller, resource_args);
 	};
+
+	/**
+	* Stores a chunk of resource. Optional parameter `binding_key` allows to mark the chunks
+	* by the logical name and finalize the resource by this name instead of list of chunk ids.
+	* Method returns uniq chunk id.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func store_chunk(content : Blob, binding_key : ?Text) : async Result.Result<Text, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+
+		chunk_increment := chunk_increment + 1;
+		let canister_id =  Principal.toText(Principal.fromActor(this));
+		// suffix chunk is needed to avoid of situation when chunk id = resource id (but it is very low probability)
+		let hex = Utils.hash_time_based(canister_id # "chunk", chunk_increment);
+
+		let chunk : Types.ResourceChunk = {
+			content = content;
+			created = Time.now();
+			id = hex;
+			binding_key = binding_key;
+		};
+		chunks.put(hex, chunk);
+		// link a chunk with binding key
+		if (Option.isSome(binding_key)) {
+			
+			let bk = Utils.unwrap(binding_key);
+			switch (chunk_bindings.get(bk)) {
+				case (?chs) {
+					// update
+					chs.chunks := List.push(hex, chs.chunks);
+					ignore chunk_bindings.replace(bk, chs);
+				};
+				case (null) {
+					// create binding
+					let binding : Types.ChunkBinding = {
+						var chunks = List.push(hex, null);
+						created = Time.now();
+					};
+					// save binding
+					chunk_bindings.put(bk, binding);
+				};
+			}
+		};
+		return #ok(hex);
+	};	
 
 	/**
 	* Sends cycles to the canister. The destination canister must have a method wallet_receive.
@@ -185,6 +231,40 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
+	/**
+	* Generates a resource based on the passed chunk ids. Chunks are being removed after this method.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func commit_batch(chunk_ids : [Text], resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		_commit_batch(chunk_ids, resource_args, caller);
+	};
+
+	/**
+	* Generates a resource based on the passed binding key (logical name for group of chunks). 
+	* Chunks are being removed after this method.
+	* If binding key doesn't refer to any chunk then err(#NotFound) is returned. Binding key is removed after this method
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func commit_batch_by_key(binding_key : Text, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+
+		switch(chunk_bindings.get(binding_key)) {
+			case (?binding){
+				if (List.size(binding.chunks) == 0) return #err(#NotFound);
+				// validate chunks in any way
+				let ar = List.toArray(List.reverse(binding.chunks));
+
+				// remove binding key
+				chunk_bindings.delete(binding_key);
+				// commit batch based on the chunk ids matched to binding key
+				_commit_batch(ar, resource_args, caller);
+			};
+			case (null){
+				return #err(#NotFound);
+			};
+		};
+	};
 
 	/**
 	* Applies http headers for the specified resource (override)
@@ -338,6 +418,30 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		});
 	};
 
+	private func _commit_batch(chunk_ids : [Text], resource_args : Types.ResourceArgs, owner : Principal) : Result.Result<Types.IdUrl, Types.Errors> {
+		// entire content of all chunks
+		var content = Buffer.Buffer<Blob>(0);
+		var content_size = 0;
+		
+		// logic of validation could be extended
+		switch(validate_chunks(chunk_ids)) {
+			case (?e) { return #err(e); };
+			case (null) { };
+		};
+
+		for (id in chunk_ids.vals()) {
+			switch (chunks.get(id)) {
+				case (?chunk) {
+					content.add(chunk.content);
+					// remove chunks from map
+					chunks.delete(id);
+				};
+				case (_) {};
+			};
+		};
+		_store_resource (Buffer.toArray(content), owner, resource_args );
+	};	
+
 
 	/**
 	* Returns information about memory usage and number of created files and folders.
@@ -363,7 +467,21 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
-    };		
+    };
+
+	private func validate_chunks (chunk_ids : [Text]) : ?Types.Errors {
+		// reject the request if any chunk is invalid
+		for (id in chunk_ids.vals()) {
+			switch (chunks.get(id)) {
+				// any logic could be added here
+				case (?chunk) {	};
+				case (null) {
+					return Option.make(#NotFound);
+				};
+			};
+		};
+		return null;
+	};		
 
 	system func preupgrade() {
 		resource_state := Iter.toArray(resources.entries());

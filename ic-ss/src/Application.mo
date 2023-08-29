@@ -233,6 +233,52 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	/**
+	* Stores a chunk of the resource (file)
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func store_chunk(repository_id : Text, content : Blob, binding_key : ?Text) : async Result.Result<Text, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.store_chunk(content, binding_key);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};
+
+	/**
+	* Build a resources based on the list of previously uploaded chunks.
+	* There are two ways to identify chunks that are used to build a final file : by the list of chunk ids or by the binding name , that was used during chunk upload.
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func commit_batch(repository_id : Text, details : Types.CommitArgs, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		// reject invalid data
+		if (details.chunks.size() == 0 and Option.isNull(details.binding_key)) return #err(#NotFound);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				switch (details.binding_key){
+					case (?binding_key) {
+						// commint by key
+						await bucket_actor.commit_batch_by_key(binding_key, resource_args);
+					};
+					case (null) {
+						// commint by ids
+						await bucket_actor.commit_batch(details.chunks, resource_args);						
+					};
+				};
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};	
+
+	/**
 	* Deletes a resource from the specified repository
 	* Allowed only to the owner or operator of the app.
 	*/

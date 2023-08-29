@@ -121,7 +121,6 @@ module {
 		id : Text;
 		// opportunity to link chunks by a logical name
 		binding_key : ?Text;
-		owner : Principal;
 	};
 
 	public type ResourceArgs = {
@@ -242,6 +241,9 @@ module {
         get_status : shared query () -> async PartitionStatus;		
 		delete_resource : shared (id : Text) -> async Result.Result<(), Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
-    };			
+		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
+		commit_batch : shared (chunk_ids : [Text], resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
+		commit_batch_by_key : shared (binding_key:Text, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
+	};			
 
 };
