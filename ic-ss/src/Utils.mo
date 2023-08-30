@@ -1,5 +1,6 @@
 import Array "mo:base/Array";
 import Blob "mo:base/Blob";
+import Buffer "mo:base/Buffer";
 import Char "mo:base/Char";
 import Debug "mo:base/Debug";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
@@ -92,6 +93,16 @@ module {
     public func get_cycles_balance() : Int {
         return ExperimentalCycles.balance();
     };
+
+    public func join<T>(a: [T], b:[T]) : [T] {
+		// Array.append is deprecated and it gives a warning
+    	let capacity : Nat = Array.size(a) + Array.size(b);
+    	let res = Buffer.Buffer<T>(capacity);
+    	for (p in a.vals()) { res.add(p); };
+    	for (p in b.vals()) { res.add(p); };
+    	Buffer.toArray(res);
+    };
+
     /**
     * Builds a "view" object which represents repository entity
     */
@@ -173,6 +184,7 @@ module {
     private func _metric_to_mb(v: Nat) : Int {
         let v_in_mb = Float.toInt(Float.abs(Float.fromInt(v) / Float.fromInt(MB_IN_BYTES)));
         return v_in_mb;
-    };            
+    };  
+              
 
 };

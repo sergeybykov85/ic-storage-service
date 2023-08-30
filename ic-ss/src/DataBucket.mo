@@ -104,7 +104,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				case (?chs) {
 					// update
 					chs.chunks := List.push(hex, chs.chunks);
-					ignore chunk_bindings.replace(bk, chs);
+					//ignore chunk_bindings.replace(bk, chs);
 				};
 				case (null) {
 					// create binding
@@ -142,18 +142,37 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};	
 	/**
 	* Creates an empty directory (resource with type Directory).
+	* If parent_path is specified, then directory is created under the mentioned location if it is exist.
+	* If parent location is mentioned but it is not exist, then error is returned.
 	* Folders are used to organize resources, for convenience, or to deploy logically groupped files
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func new_directory(name : Text) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func new_directory(name : Text, parent_path:?Text) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
-		let canister_id = Principal.toText(Principal.fromActor(this));				
-		let directory_id = Utils.hash(canister_id, [name]);		
-		switch (resources.get(directory_id)) {
-			case (?f) {
-				return #err(#AlreadyRegistered);				
+		let canister_id = Principal.toText(Principal.fromActor(this));	
+		var parent_directory_id:?Text = null;
+		let directory_id = switch (parent_path){
+			case (?path) {
+				// check if parent_path is already exists. Otherwise returns an error
+				let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
+				let parent_id:Text = Utils.hash(canister_id, path_tokens);
+				parent_directory_id:= ?parent_id;
+				// check if parent already exists.
+				switch (resources.get(parent_id)) {
+					case (?p) { 
+						let dir_id = Utils.hash(canister_id, Utils.join(path_tokens, [name]));	
+						p.leafs := List.push(dir_id, p.leafs);
+						dir_id;
+					};
+					// parent directory is not exists, error
+					case (null) {return #err(#NotFound);}
+				};
 			};
+			case (null) {Utils.hash(canister_id, [name]);}
+		};
+		switch (resources.get(directory_id)) {
+			case (?f) { return #err(#AlreadyRegistered); };
 			case (null) {
 				resources.put(directory_id, {
 					resource_type = #Directory;
@@ -162,7 +181,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					content_size = 0;
 					created = Time.now();
 					name = name;
-					parent = null;
+					parent = parent_directory_id;
 					var leafs = List.nil();
 				});
 				total_directories  := total_directories + 1;
@@ -178,6 +197,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			};
 		};			
 	};
+
 	/**
 	* Removes a resource (folder or file) by its id. If it is a folder, then all child files are removed as well.
 	* If it is a file and it is under the folder, then file is removed and the leafs of the folder is updated.
@@ -188,18 +208,12 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 		switch (resources.get(resource_id)) {
 			case (?resource) {
-				var removed_folders = 0;
+				var removed_directories = 0;
 				var removed_files = 0;
-				// remove leafs
-				if (not List.isNil(resource.leafs)) {
-					// delete leafs
-					for (leaf in List.toIter(resource.leafs)){
-						// leaf is a file becaus subdirectory is not supported now!
-						removed_files:=removed_files + 1;
-						resources.delete(leaf);
-						resource_data := Trie.remove(resource_data, Utils.text_key(leaf), Text.equal).0;
-					}
-				};
+				let (f, d) = _delete_by_id (resource_id);
+				removed_files := removed_files + f;
+				removed_directories := removed_directories + d;				
+
 				// check if it is a leaf, need to update the folder and exclude a leaf
 				if (Option.isSome(resource.parent)) {
 					let f_id = Utils.unwrap(resource.parent);
@@ -211,18 +225,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						case (null) {};
 					};
 				};
-				// update counters based on the removed resource type
-				switch (resource.resource_type) {
-					case (#Directory) { removed_folders := removed_folders + 1; };
-					case (#File) { removed_files := removed_files + 1; };
-				};
 				// update global var
-				if (removed_folders > 0) { total_directories := total_directories - removed_folders; };
+				if (removed_directories > 0) { total_directories := total_directories - removed_directories; };
 				if (removed_files > 0) { total_files := total_files - removed_files; };
-				// delete resource details
-				resources.delete(resource_id);
-				// delete from stable memory
-				resource_data := Trie.remove(resource_data, Utils.text_key(resource_id), Text.equal).0;
 				return #ok();
 			};
 			case (_) {
@@ -308,12 +313,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	/**
-	* Returns folder details by  name not the id
+	* Returns directory details by  its path (location) instead of id
 	* Bytes of the resource are not returned here.
 	*/
-	public query func get_directory_by_name(name : Text) : async Result.Result<Types.DirectoryView, Types.Errors> {
+	public query func get_directory_by_path(path : Text) : async Result.Result<Types.DirectoryView, Types.Errors> {
 		let canister_id =  Principal.toText(Principal.fromActor(this));	
-		let directory_id = Utils.hash(canister_id, [name]);
+		let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
+		let directory_id:Text = Utils.hash(canister_id, path_tokens);
 		switch (resources.get(directory_id)) {
 			case (?res) {
 				var total_size = 0;
@@ -355,36 +361,28 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		var parent:?Text = null;
 
 		if (Option.isSome(resource_args.directory)) {
+			// passed directory path
 			let directory = Utils.unwrap(resource_args.directory);
-			let directory_id:Text = Utils.hash(canister_id, [directory]);	
+			let path_tokens : [Text] = Iter.toArray(Text.tokens(directory, #char '/'));
+			let directory_id:Text = Utils.hash(canister_id, path_tokens);
+
 			// if resource is a part of directory, then name is uniq inside the directory
-			resource_id := Utils.hash(canister_id, [directory, resource_args.name]);	
+			resource_id := Utils.hash(canister_id, Utils.join(path_tokens, [resource_args.name]));	
 			// file already presend in the directory
 			if (Option.isSome(resources.get(resource_id))) {
 				// reject
 				return #err(#AlreadyRegistered);
 			};
-
+			// parent id for the new resource
+			parent :=?directory_id;
+			// check if directory by the specified path is already present
 			switch (resources.get(directory_id)) {
 				case (?f) {
 					f.leafs := List.push(resource_id, f.leafs);
-					ignore resources.replace(directory_id, f);
+					//ignore resources.replace(directory_id, f);
 				};
-				case (null) {
-					// save new directory
-					resources.put(directory_id, {
-						resource_type = #Directory;
-						var http_headers = [];
-						payload = [];
-						content_size = 0;
-						created = Time.now();
-						name = directory;
-						parent = null;
-						var leafs =  List.push(resource_id, null);
-					});
-					parent := ?directory_id;
-					total_directories  := total_directories + 1;
-				};
+				// directory is not found
+				case (null) { return #err(#NotFound); };
 			};
 		};
 
@@ -392,7 +390,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			content_size := content_size + p.size();
 		};
 
-		let res : Types.Resource = {
+		// resouce mapping
+		resources.put(resource_id, {
 			resource_type = #File;
 			var http_headers = [("Content-Type", resource_args.content_type)];
 			content_size = content_size;
@@ -400,10 +399,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			name = resource_args.name;
 			parent = parent;
 			var leafs = null;
-		};
-
-		// resouce mapping
-		resources.put(resource_id, res);
+		});
 		// store data in stable var
 		resource_data := Trie.put(resource_data, Utils.text_key(resource_id), Text.equal, payload).0;
 
@@ -440,6 +436,39 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			};
 		};
 		_store_resource (Buffer.toArray(content), owner, resource_args );
+	};
+	/**
+	* Deletes resource by its id (either directory or file).
+	* Returns number of removed files and directories
+	*/
+	private func _delete_by_id (id:Text) : (Nat, Nat) {
+		var removed_files = 0;
+		var removed_directories = 0;
+		switch (resources.get(id)) { 
+			case (?r) {
+				switch (r.resource_type) {
+					case (#File) {
+						resources.delete(id);
+						removed_files:=removed_files+1;
+						resource_data := Trie.remove(resource_data, Utils.text_key(id), Text.equal).0;
+					};
+					case (#Directory) {
+						if (not List.isNil(r.leafs)) {
+							// delete leafs
+							for (leaf in List.toIter(r.leafs)){
+								let (f, d) = _delete_by_id(leaf);
+								removed_files:=removed_files + f;
+								removed_directories:=removed_directories + d;
+							}
+						};
+						resources.delete(id);						
+					};
+				};
+			};
+			// ignore
+			case (null) {};
+		};
+		return (removed_files, removed_directories);
 	};	
 
 

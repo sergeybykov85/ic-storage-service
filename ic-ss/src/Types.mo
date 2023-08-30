@@ -237,7 +237,7 @@ module {
 
     public type DataBucketActor = actor {
         withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
-		new_directory : shared (name : Text) -> async Result.Result<IdUrl, Errors>;
+		new_directory : shared (name : Text, parent_path:?Text) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;		
 		delete_resource : shared (id : Text) -> async Result.Result<(), Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;

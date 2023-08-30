@@ -65,12 +65,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	*/
     public shared ({ caller }) func add_whitelist_customers(ids: [Principal]) {
     	assert(caller == OWNER or _is_operator(caller));
-		// Array.append is deprecated and it gives a warning
-    	let capacity : Nat = Array.size(whitelist_customers) + Array.size(ids);
-    	let res = Buffer.Buffer<Principal>(capacity);
-    	for (p in whitelist_customers.vals()) { res.add(p); };
-    	for (p in ids.vals()) { res.add(p); };
-    	whitelist_customers := Buffer.toArray(res);
+    	whitelist_customers := Utils.join(whitelist_customers, ids);
     };	
 
 	public shared ({ caller }) func access_list() : async (Types.AccessList) {
