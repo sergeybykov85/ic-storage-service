@@ -122,24 +122,39 @@ module {
 		// opportunity to link chunks by a logical name
 		binding_key : ?Text;
 	};
-
+	// Type object to create a new resource
 	public type ResourceArgs = {
-		content_type : Text;
+		content_type : ?Text;
 		name : Text;
 		// input argument, directory name
 		directory : ?Text;
 	};
+
+	public type ResourceAction = {
+		#Copy;
+		#Delete;
+		#Rename;
+	};
+	// Type contains possible required data to make some action with an existing resource
+	public type ActionResourceArgs = {
+		id : Text;
+		action : ResourceAction;
+		name : ?Text;
+		directory : ?Text;
+	};	
 
 	public type Resource = {
 		resource_type : ResourceType;
 		var http_headers : [(Text, Text)];
 		content_size : Nat;
 		created : Int;
-		name : Text;
+		var name : Text;
 		// folder reference (hash, not the name)
-		parent : ?Text;
+		var parent : ?Text;
 		// references to other resources in case of "folder type"
-		var leafs : List.List<Text>;		
+		var leafs : List.List<Text>;
+		// data identifier 
+		did : ?Text;		
 	};
 
 	public type ResourceView = {
@@ -239,7 +254,7 @@ module {
         withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
 		new_directory : shared (name : Text, parent_path:?Text) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;		
-		delete_resource : shared (id : Text) -> async Result.Result<(), Errors>;
+		execute_action : shared (args : ActionResourceArgs) -> async Result.Result<(), Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
 		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
 		commit_batch : shared (chunk_ids : [Text], resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;

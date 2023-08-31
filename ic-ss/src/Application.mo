@@ -287,7 +287,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.delete_resource(resource_id);
+				await bucket_actor.execute_action({
+					id = resource_id;
+					action = #Delete;
+					name = null;
+					directory = null;
+				});
 			};
 			case (null) {
 				return #err(#NotFound);
