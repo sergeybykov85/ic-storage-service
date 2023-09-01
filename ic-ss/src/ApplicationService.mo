@@ -82,7 +82,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 
 		switch (customer_get(identity)) {
 			case (?customer) {
-				return #err(#AlreadyRegistered);
+				return #err(#DuplicateRecord);
 			};
 			case (null) {
 				let customer : Types.Customer = {
@@ -107,7 +107,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		if (Option.isSome(Array.find(whitelist_customers, func (x: Principal) : Bool { x == caller }))) {
 
 			switch (customer_get(caller)) {
-				case (?customer) { return #err(#AlreadyRegistered); };
+				case (?customer) { return #err(#DuplicateRecord); };
 				case (null) {
 					// register customer with a Free tier
 					let customer : Types.Customer = {

@@ -22,6 +22,8 @@ import Utils "./Utils";
 shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this {
 
     let OWNER = installation.caller;
+	
+	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
 
 	stable let NAME = initArgs.name;
 	stable let NETWORK = initArgs.network;
@@ -55,6 +57,27 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
     private func resource_data_get(id : Text) : ?[Blob] = Trie.get(resource_data, Utils.text_key(id), Text.equal);
 
+	private func cleanup_expired() : async () {
+		let now = Time.now();
+		let fChunks = Map.mapFilter<Text, Types.ResourceChunk, Types.ResourceChunk>(chunks, Text.equal, Text.hash,
+			func(key : Text, chunk : Types.ResourceChunk) : ?Types.ResourceChunk {
+				let age = now - chunk.created;
+				if (age <= TTL_CHUNK) { return ?chunk; }
+				else { return null; };
+			}
+		);
+		chunks := fChunks;
+		let fBindings = Map.mapFilter<Text, Types.ChunkBinding, Types.ChunkBinding>(chunk_bindings, Text.equal, Text.hash,
+			func(key : Text, bind : Types.ChunkBinding) : ?Types.ChunkBinding {
+				let age = now - bind.created;
+				if (age <= TTL_CHUNK) { return ?bind; } 
+				else { return null; };
+			}
+		);
+		chunk_bindings := fBindings;		
+	};
+
+	stable var timer_cleanup = Timer.recurringTimer(#seconds(120), cleanup_expired);	
 
 	/**
 	* Applies list of operators for the storage service
@@ -105,18 +128,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			let bk = Utils.unwrap(binding_key);
 			switch (chunk_bindings.get(bk)) {
 				case (?chs) {
-					// update
 					chs.chunks := List.push(hex, chs.chunks);
 					//ignore chunk_bindings.replace(bk, chs);
 				};
 				case (null) {
-					// create binding
-					let binding : Types.ChunkBinding = {
+					chunk_bindings.put(bk, {
 						var chunks = List.push(hex, null);
 						created = Time.now();
-					};
-					// save binding
-					chunk_bindings.put(bk, binding);
+					});
 				};
 			}
 		};
@@ -175,7 +194,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (null) {Utils.hash(canister_id, [name]);}
 		};
 		switch (resources.get(directory_id)) {
-			case (?f) { return #err(#AlreadyRegistered); };
+			case (?f) { return #err(#DuplicateRecord); };
 			case (null) {
 				resources.put(directory_id, {
 					resource_type = #Directory;
@@ -202,45 +221,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		switch (args.action){
 			case (#Copy) { _copy_resource(args);};
 			case (#Delete) {_delete_resource (args.id)};
-			case (#Rename) { _rename_resource(args); }
+			case (#Rename) { _move_resource(args); }
 		}
 	};	
-
-	/**
-	* Removes a resource (folder or file) by its id. If it is a folder, then all child files are removed as well.
-	* If it is a file and it is under the folder, then file is removed and the leafs of the folder is updated.
-	* Allowed only to the owner or operator of the bucket.
-	*/
-	private func _delete_resource(resource_id : Text) : Result.Result<(Types.IdUrl), Types.Errors> {
-		switch (resources.get(resource_id)) {
-			case (?resource) {
-				var removed_directories = 0;
-				var removed_files = 0;
-				let (f, d) = _delete_by_id (resource_id);
-				removed_files := removed_files + f;
-				removed_directories := removed_directories + d;				
-
-				// check if it is a leaf, need to update the folder and exclude a leaf
-				if (Option.isSome(resource.parent)) {
-					let f_id = Utils.unwrap(resource.parent);
-					switch (resources.get(f_id)) {
-						case (?f) {
-							f.leafs := List.mapFilter<Text, Text>(f.leafs,
-								func lf = if (lf == f_id) { null } else { ?lf });
-						};
-						case (null) {};
-					};
-				};
-				// update global var
-				if (removed_directories > 0) { total_directories := total_directories - removed_directories; };
-				if (removed_files > 0) { total_files := total_files - removed_files; };
-				return #ok({id = resource_id; url = ""});	
-			};
-			case (_) {
-				return #err(#NotFound);
-			};
-		};
-	};
 
 	/**
 	* Generates a resource based on the passed chunk ids. Chunks are being removed after this method.
@@ -328,6 +311,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		let directory_id:Text = Utils.hash(canister_id, path_tokens);
 		switch (resources.get(directory_id)) {
 			case (?res) {
+				// allowed only for the directory
+				if (res.resource_type == #File) return #err (#NotFound);
+
 				var total_size = 0;
 				for (leaf in List.toIter(res.leafs)) {
 					let r_size = switch (resources.get(leaf)) {
@@ -356,6 +342,45 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
+	/**
+	* Removes a resource (folder or file) by its id. If it is a folder, then all child files are removed as well.
+	* If it is a file and it is under the folder, then file is removed and the leafs of the folder is updated.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	private func _delete_resource(resource_id : Text) : Result.Result<(Types.IdUrl), Types.Errors> {
+		switch (resources.get(resource_id)) {
+			case (?resource) {
+				var removed_directories = 0;
+				var removed_files = 0;
+				let (f, d) = _delete_by_id (resource_id);
+				removed_files := removed_files + f;
+				removed_directories := removed_directories + d;				
+
+				// check if it is a leaf, need to update the folder and exclude a leaf
+				if (Option.isSome(resource.parent)) {
+					let f_id = Utils.unwrap(resource.parent);
+					switch (resources.get(f_id)) {
+						case (?f) {
+							f.leafs := List.mapFilter<Text, Text>(f.leafs,
+								func lf = if (lf == f_id) { null } else { ?lf });
+						};
+						case (null) {};
+					};
+				};
+				// update global var
+				if (removed_directories > 0) { total_directories := total_directories - removed_directories; };
+				if (removed_files > 0) { total_files := total_files - removed_files; };
+				return #ok({id = resource_id; url = ""});	
+			};
+			case (_) {
+				return #err(#NotFound);
+			};
+		};
+	};	
+	/**
+	* Registers a new resource entity.
+	* If htto_headers are specified, then applies them otherwise build sinlge http header based on the content type
+	*/
 	private func _store_resource(payload : [Blob], resource_args : Types.ResourceArgs, http_headers: ?[(Text,Text)]) : Result.Result<Types.IdUrl, Types.Errors> {
 		// increment counter
 		resource_increment  := resource_increment + 1;
@@ -376,10 +401,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			// if resource is a part of directory, then name is uniq inside the directory
 			resource_id := Utils.hash(canister_id, [directory_id, resource_args.name]);	
 			// file already presend in the directory
-			if (Option.isSome(resources.get(resource_id))) {
-				// reject
-				return #err(#AlreadyRegistered);
-			};
+			if (Option.isSome(resources.get(resource_id))) { return #err(#DuplicateRecord); };
 			// parent id for the new resource
 			parent :=?directory_id;
 			// check if directory by the specified path is already present
@@ -423,23 +445,21 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		return #ok(build_id_url(resource_id, canister_id));
 	};
 
-	private func _rename_resource (args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
+	/**
+	* Renames or moves  the resource entity.
+	*/
+	private func _move_resource (args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
 			case (?res) {
-				if (Option.isNull(args.name)) return #err(#OperationNotAllowed);
-				let canister_id = Principal.toText(Principal.fromActor(this));				
-				let file_name = Utils.unwrap(args.name);
-				
-				// clone of the directory is not supported
 				if (res.resource_type == #Directory) { return #err(#OperationNotAllowed); };
+				let canister_id = Principal.toText(Principal.fromActor(this));				
+				let file_name = Option.get(args.name, res.name);				
 
 				let new_path_id = switch (args.directory) {
 					case (?path) {
 						let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
 						let dir_id = Utils.hash(canister_id, path_tokens);
-						if (Option.isNull(resources.get(dir_id))) {
-							return #err(#NotFound);
-						};
+						if (Option.isNull(resources.get(dir_id))) { return #err(#NotFound); };
 						?dir_id;
 					};
 					case (null) {null};
@@ -450,19 +470,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						// new folder or existing one
 						let path_id_apply = Option.get(new_path_id, parent);
 						let resource_id = Utils.hash(canister_id, [path_id_apply, file_name]);	
-						// file already presend in the directory
-						if (Option.isSome(resources.get(resource_id))) { return #err(#AlreadyRegistered);};
-						// store new metadata
-						resources.put(resource_id, {
-							resource_type = res.resource_type;
-							var http_headers = res.http_headers;
-							content_size = res.content_size;
-							created = res.created;
-							var name = file_name;
-							var parent = ?path_id_apply;
-							var leafs = res.leafs;
-							did = res.did;
-						});	
+						if (Option.isSome(resources.get(resource_id))) { return #err(#DuplicateRecord);};
+						res.name := file_name;
+						res.parent:= ?path_id_apply;
+						resources.put(resource_id, res);	
 						resources.delete(args.id);
 						// put a new leaf into the folder (new or existing)
 						switch (resources.get(path_id_apply)) {
@@ -480,17 +491,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						if (Option.isSome(new_path_id)) {
 							let path_id_apply = Utils.unwrap(new_path_id);
 							let resource_id = Utils.hash(canister_id, [path_id_apply, file_name]);	
-							if (Option.isSome(resources.get(resource_id))) {return #err(#AlreadyRegistered);};
-							resources.put(resource_id, {
-								resource_type = res.resource_type;
-								var http_headers = res.http_headers;
-								content_size = res.content_size;
-								created = res.created;
-								var name = file_name;
-								var parent = new_path_id;
-								var leafs = res.leafs;
-								did = res.did;
-							});
+							if (Option.isSome(resources.get(resource_id))) {return #err(#DuplicateRecord);};
+							res.name := file_name;
+							res.parent := new_path_id;
+							resources.put(resource_id, res);
 							resources.delete(args.id);													
 							switch (resources.get(path_id_apply)) {
 								case (?p) { p.leafs := List.push(resource_id, p.leafs);	};
@@ -498,6 +502,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 							};
 							return #ok(build_id_url(resource_id, canister_id));			
 						} else {
+							if (file_name == res.name) {return #err(#DuplicateRecord);};
 							// just rename
 							res.name := file_name;
 							return #ok(build_id_url(args.id, canister_id));			
@@ -532,8 +537,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					return #err(#OperationNotAllowed);
 				};
 				let canister_id = Principal.toText(Principal.fromActor(this));
-				// random file name or taken from as an argument
-				let file_name = "args.name";
+				let file_name = Option.get(args.name, "copy_"#res.name);
 				// check further name under the directory to guarantee uniq name (only for directory)
 				if (Option.isSome(args.directory)) {
 					// passed directory path
@@ -550,7 +554,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					let resource_id = Utils.hash(canister_id, [directory_id, file_name]);	
 					// file already presend in the directory
 					if (Option.isSome(resources.get(resource_id))) {
-						return #err(#AlreadyRegistered);
+						return #err(#DuplicateRecord);
 					};
 				};
 				
@@ -633,8 +637,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (null) {};
 		};
 		return (removed_files, removed_directories);
-	};	
-
+	};
 
 	/**
 	* Returns information about memory usage and number of created files and folders.
@@ -675,6 +678,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	system func preupgrade() {
 		resource_state := Iter.toArray(resources.entries());
 		chunk_state := Iter.toArray(chunks.entries());
+		Timer.cancelTimer(timer_cleanup);
 	};
 
 	system func postupgrade() {
@@ -682,6 +686,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		chunks := Map.fromIter<Text, Types.ResourceChunk>(chunk_state.vals(), chunk_state.size(), Text.equal, Text.hash);
 		resource_state:=[];
 		chunk_state:=[];
+		// execute scanner each 2 minutes
+		timer_cleanup:= Timer.recurringTimer(#seconds(120), cleanup_expired);
+
 	};
 
   	public shared func wallet_receive() {

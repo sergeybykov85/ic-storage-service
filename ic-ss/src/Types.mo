@@ -223,7 +223,7 @@ module {
 		// no resource or no chunk
 		#NotFound;
 		// record already registered
-		#AlreadyRegistered;
+		#DuplicateRecord;
 		// action not allowed by the logic or constraints
         #OperationNotAllowed;
         // not registered

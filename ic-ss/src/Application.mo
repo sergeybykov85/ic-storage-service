@@ -298,7 +298,51 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				return #err(#NotFound);
 			};
 		}
-	};	
+	};
+
+	/**
+	* Renames a resource. This method assumes, that resource is not moved between directories
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func rename_resource(repository_id : Text, resource_id : Text, name:Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.execute_action({
+					id = resource_id;
+					action = #Rename;
+					name = ?name;
+					directory = null;
+				});
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};
+
+	/**
+	* Moves a resource into another directory.
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func move_resource(repository_id : Text, resource_id : Text, path:Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.execute_action({
+					id = resource_id;
+					action = #Rename;
+					name = null;
+					directory = ?path;
+				});
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};			
 
 	public query func get_repository_records() : async [Types.RepositoryView] {
 		return Iter.toArray(Iter.map (Trie.iter(repositories), 
