@@ -50,6 +50,29 @@ module {
 
     public func text_key(id: Text) : Trie.Key<Text> = { key = id; hash = Text.hash id };
 
+    public func get_resource_id(url : Text) : ?([Text], Types.ViewMode) {
+
+        if (Text.startsWith(url, #text RESOURCE_ROUTE) ) {
+            let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
+            let last_token : Text = url_split[url_split.size() - 1];
+            let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
+            return ?([filter_query_params[0]], #Open);            
+        };
+        if (Text.startsWith(url, #text DOWNLOAD_ROUTE)) {
+            let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
+            let last_token : Text = url_split[url_split.size() - 1];
+            let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
+            return ?([filter_query_params[0]], #Download);            
+        };        
+        if (Text.startsWith(url, #text NAME_BASED_ROUTE)) {
+            let tokens_iter = Text.tokens(unwrap(Text.stripStart(url, #text NAME_BASED_ROUTE)) , #char '/');
+            let tokens = Array.map<Text, Text>(Iter.toArray(tokens_iter), func (x: Text): Text = Text.replace(x, #text "%20", " "));
+            return ?(tokens, #Names);      
+        };
+
+        return null;
+    };    
+
     /**
     * Builds resource url based on specified params (id, network, view mode)
     */
