@@ -254,7 +254,7 @@ module {
         withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
 		new_directory : shared (name : Text, parent_path:?Text) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;		
-		execute_action : shared (args : ActionResourceArgs) -> async Result.Result<(), Errors>;
+		execute_action : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
 		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
 		commit_batch : shared (chunk_ids : [Text], resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;

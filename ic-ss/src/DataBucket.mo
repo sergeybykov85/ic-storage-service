@@ -16,6 +16,7 @@ import Time "mo:base/Time";
 import Trie "mo:base/Trie";
 import Timer "mo:base/Timer";
 
+import Http "./Http";
 import Types "./Types";
 import Utils "./Utils";
 
@@ -41,9 +42,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	// number of directories
 	stable var total_directories : Nat = 0;
 	// increment counter, internal needs
-	stable var chunk_increment : Nat = 0;
-	// resource counter, internal needs
-	stable var resource_increment : Nat = 0;	
+	stable var _internal_increment : Nat = 0;
 	// -------------------------------------------------
 
 	// -----  resource metadata and chunks are stored in heap and flushed to stable memory in case of canister upgrade
@@ -110,10 +109,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	public shared ({ caller }) func store_chunk(content : Blob, binding_key : ?Text) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
-		chunk_increment := chunk_increment + 1;
+		_internal_increment := _internal_increment + 1;
 		let canister_id =  Principal.toText(Principal.fromActor(this));
 		// suffix chunk is needed to avoid of situation when chunk id = resource id (but it is very low probability)
-		let hex = Utils.hash_time_based(canister_id # "chunk", chunk_increment);
+		let hex = Utils.hash_time_based(canister_id # "chunk", _internal_increment);
 
 		let chunk : Types.ResourceChunk = {
 			content = content;
@@ -171,9 +170,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	*/
 	public shared ({ caller }) func new_directory(name : Text, parent_path:?Text) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-
 		let canister_id = Principal.toText(Principal.fromActor(this));	
 		var parent_directory_id:?Text = null;
+		var parent_opt : ?Types.Resource = null;
 		let directory_id = switch (parent_path){
 			case (?path) {
 				// check if parent_path is already exists. Otherwise returns an error
@@ -183,15 +182,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				// check if parent already exists.
 				switch (resources.get(parent_id)) {
 					case (?p) { 
-						let dir_id = Utils.hash(canister_id, Utils.join(path_tokens, [name]));	
-						p.leafs := List.push(dir_id, p.leafs);
-						dir_id;
+						parent_opt:=?p;
+						Utils.hash(canister_id, Utils.join(path_tokens, [name]));	
 					};
 					// parent directory is not exists, error
 					case (null) {return #err(#NotFound);}
 				};
 			};
-			case (null) {Utils.hash(canister_id, [name]);}
+			case (null) { Utils.hash(canister_id, [name]);}
 		};
 		switch (resources.get(directory_id)) {
 			case (?f) { return #err(#DuplicateRecord); };
@@ -207,6 +205,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					var leafs = List.nil();
 					did = null;
 				});
+				switch (parent_opt){
+					case (?p) { p.leafs := List.push(directory_id, p.leafs); };
+					case (null) {};
+				};
 				total_directories  := total_directories + 1;
 				return #ok(build_id_url(directory_id, canister_id));
 			};
@@ -223,7 +225,124 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (#Delete) {_delete_resource (args.id)};
 			case (#Rename) { _move_resource(args); }
 		}
-	};	
+	};
+
+	public shared query ({ caller }) func http_request(request : Http.Request) : async Http.Response {
+		// check download suffix
+		switch (Utils.get_resource_id(request.url)) {
+			case (?r) {
+				let path_size = Array.size(r.0);
+				if (path_size == 0) return Http.not_found();
+				let resouce_id = switch (r.1) {
+					case (#Names) {
+						let canister_id = Principal.toText(Principal.fromActor(this));
+						if (path_size == 1) {
+							Utils.hash(canister_id, r.0);
+						}else {
+							let by_names = Utils.hash(canister_id, r.0);
+        					switch (resources.get(by_names)) {
+								case (?d) {by_names;};
+								// path till the last element, final id is a name
+								case (null) { 
+									let k1 = Utils.hash(canister_id, Array.subArray<Text>(r.0, 0, path_size - 1));
+									Utils.hash(canister_id, [k1, r.0[path_size-1]]);
+								};
+							};
+						};
+					};
+					case (_) { r.0[0]; };
+				};
+				return resource_http_handler(resouce_id, r.1, http_request_streaming_callback);
+			};
+			case null { return Http.not_found();};
+
+		};
+	};
+
+    public query func http_request_streaming_callback(token : Http.StreamingCallbackToken) : async Http.StreamingCallbackResponse {
+        switch(resource_data_get(token.key)) {
+            case (null) { };
+            case (?payload)  { return Http.streamContent(token.key, token.index, payload); };
+        };
+        {
+            body = Blob.fromArray([]);
+            token = null;
+        };
+    };
+
+	private func full_path (v: Types.Resource) : Text {
+		var path:Text = v.name;
+		if (Option.isSome(v.parent)) {
+			switch (resources.get(Utils.unwrap(v.parent))){
+				case (?p) {
+					if (Option.isSome(p.parent)) {
+						path := full_path(p) # "/" # path;
+
+					} else  {
+						path := p.name # "/" # path;
+					}
+				};
+				case (null) {};
+			};
+		};
+		return path;
+	};
+
+    private func resource_http_handler(key : Text, view_mode : Types.ViewMode, callback : Http.StreamingCallback) : Http.Response {
+        switch (resources.get(key)) {
+            case (null) { Http.not_found() };
+            case (? v)  {
+				if (v.resource_type == #Directory) {
+					let canister_id = Principal.toText(Principal.fromActor(this));
+					let directory_path = full_path(v);
+					var directory_html = "<html><head></head><body>" # "<h2>"# Text.replace(directory_path, #char '/', " / " ) # " / </h2><hr/>";
+					var files = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
+					var dirs = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
+					for (leaf in List.toIter(v.leafs)) {
+						switch (resources.get(leaf)) {
+							case (?r) {
+								if (r.resource_type == #Directory) dirs.add((leaf, r));
+								if (r.resource_type == #File) files.add((leaf, r));
+							}; 
+							case (null) {};
+						};
+					};
+					// render dirs
+					Buffer.iterate<(Text, Types.Resource)>(dirs, func (id, r) {
+						let path = directory_path # "/" # r.name;
+						let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
+						directory_html := directory_html # "<div style=\"margin:10px;\">|__ <a style=\"font-weight:bold;\"; href=\"" # url # "\" target = \"_blank\">"# r.name # "/</a></div>";
+					});					
+					// render files
+					Buffer.iterate<(Text, Types.Resource)>(files, func (id, r) {
+						let path = directory_path # "/" # r.name;
+						let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
+						let url_download = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Download});
+						directory_html := directory_html # "<div style=\"margin:10px;\"><a style=\"padding-left:30px;\"; href=\"" # url # "\" target = \"_blank\">"# r.name # "</a>";
+						directory_html := directory_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\"> download</a>";
+						directory_html := directory_html # "<a style=\"float:right; padding-right:25px;\" href=\"" # url_download #"\" target = \"_blank\"> raw link</a>";
+						directory_html := directory_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
+					});
+					directory_html := directory_html # "</body></html>";					
+					return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html));
+				};
+
+				let headers = switch (view_mode) {
+					case (#Download) { Utils.join([("Content-Disposition", Text.concat("attachment; filename=", v.name))], v.http_headers);	};
+					case (_) {v.http_headers};
+				};
+
+				let payload = switch (resource_data_get(Utils.unwrap(v.did))) {
+					case (?p) {p;};
+					case (null) {return Http.not_found();};
+				};	
+                if (payload.size() > 1) {
+                    return Http.handleLargeContent(key, headers, payload, callback);
+                };
+                return Http.success(headers, payload[0]);
+            };
+        };
+    };
 
 	/**
 	* Generates a resource based on the passed chunk ids. Chunks are being removed after this method.
@@ -270,7 +389,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		switch (resources.get(resource_id)) {
 			case (?resource) {
 				resource.http_headers:= Array.map<Types.NameValue, (Text, Text)>(http_headers, func h = (h.name, h.value) );
-				ignore resources.replace(resource_id, resource);
 				return #ok();
 			};
 			case (_) {
@@ -313,7 +431,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (?res) {
 				// allowed only for the directory
 				if (res.resource_type == #File) return #err (#NotFound);
-
 				var total_size = 0;
 				for (leaf in List.toIter(res.leafs)) {
 					let r_size = switch (resources.get(leaf)) {
@@ -383,10 +500,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	*/
 	private func _store_resource(payload : [Blob], resource_args : Types.ResourceArgs, http_headers: ?[(Text,Text)]) : Result.Result<Types.IdUrl, Types.Errors> {
 		// increment counter
-		resource_increment  := resource_increment + 1;
+		_internal_increment  := _internal_increment + 1;
 		let canister_id = Principal.toText(Principal.fromActor(this));
 		// generated data id
-		let did = Utils.hash_time_based(canister_id, resource_increment);
+		let did = Utils.hash_time_based(canister_id, _internal_increment);
 		var resource_id = did;
 		var content_size = 0;
 		// reference to directory id
@@ -440,6 +557,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			var leafs = null;
 			did = ?did;
 		});
+		total_directories  := total_directories + 1;
 		// store data in stable var
 		resource_data := Trie.put(resource_data, Utils.text_key(did), Text.equal, payload).0;
 		return #ok(build_id_url(resource_id, canister_id));

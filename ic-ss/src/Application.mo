@@ -282,7 +282,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Deletes a resource from the specified repository
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func delete_resource(repository_id : Text, resource_id : Text) : async Result.Result<(), Types.Errors> {
+	public shared ({ caller }) func delete_resource(repository_id : Text, resource_id : Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
@@ -304,7 +304,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Renames a resource. This method assumes, that resource is not moved between directories
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func rename_resource(repository_id : Text, resource_id : Text, name:Text) : async Result.Result<(), Types.Errors> {
+	public shared ({ caller }) func rename_resource(repository_id : Text, resource_id : Text, name:Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
@@ -326,7 +326,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Moves a resource into another directory.
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func move_resource(repository_id : Text, resource_id : Text, path:Text) : async Result.Result<(), Types.Errors> {
+	public shared ({ caller }) func move_resource(repository_id : Text, resource_id : Text, path:Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
