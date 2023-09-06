@@ -57,6 +57,27 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	/**
+	* Sends cycles to the canister. The destination canister must have a method wallet_receive.
+	* It is possible to specify the amount of cycles to leave.
+	* Yes, it is possible to call IC.deposit_cycles here to send funds, 
+	* but the global idea is to use the "methods of the canister from the ecosystem" to extend them by custom logic if needed.
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func withdraw_cycles (args : Types.WitdrawArgs) : async () {
+		assert(caller == OWNER or _is_operator(caller));
+
+		let destination = Principal.toText(args.to);
+		let wallet : Types.Wallet = actor (destination);
+		let cycles = Cycles.balance();
+		let cycles_to_leave = Option.get(args.remainder_cycles, 0);
+		if  (cycles > cycles_to_leave) {
+			let cycles_to_send:Nat = cycles - cycles_to_leave;
+			Cycles.add(cycles_to_send);
+            await wallet.wallet_receive();
+		}
+	};	
+
+	/**
 	* Registers a new repository. 
 	* Allowed only to the owner or operator of the app.
 	*/
@@ -93,17 +114,17 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_repository (repository_id : Text) : async Result.Result<Text, Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				for (bucket_id in List.toIter(repo.buckets)){
 					let bucket = Principal.fromText(bucket_id);
-					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					let ic_storage_wallet : Types.Wallet = actor (bucket_id);
 					/**
 					*  send cycles to "application canister" in case of removing a bucket canister.
 					*  right now, remainder_cycles is a constant, the idea is to leave some funds to process the request
 					*/
-					await bucket_actor.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
+					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
 				};
@@ -117,19 +138,44 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	/**
+	* Triggers a cleanup job for the a  repository. If bucket is not specified, then job is triggered for all buckets, otherwise only for the specified bucket.
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func clean_up_repository (repository_id : Text, bucket_id : ?Text) : async Result.Result<Text, Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let to_process = switch (bucket_id) {
+					case (?bucket) {List.filter(repo.buckets, func (b:Text):Bool {b == bucket} );};
+					case (null) {repo.buckets;}
+				};
+				for (bucket_id in List.toIter(to_process)){
+					let bucket = Principal.fromText(bucket_id);
+					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					await bucket_actor.clean_up();
+				};
+				return #ok(repository_id);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};	
+
+	/**
 	* Removes a bucket from the existing repository. Active bucket can't be removed.
 	* The cycles from the bucket are being sent to the application canister
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_bucket (repository_id : Text, bucket_id: Text) : async Result.Result<Text, Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				if (repo.active_bucket == bucket_id) return #err(#OperationNotAllowed);
 				if (Option.isSome(List.find(repo.buckets, func (x: Text) : Bool { x == bucket_id }))) {
 					let bucket = Principal.fromText(bucket_id);
-					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
-					await bucket_actor.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});				
+					let ic_storage_wallet : Types.Wallet = actor (bucket_id);
+					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});				
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
 					// exclude bucket id
@@ -152,7 +198,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func new_bucket (repository_id : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let cycles_assign = Option.get(cycles, cycles_bucket_init);
@@ -202,12 +248,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Registers  a new folder (empty) in the active bucket of the specified repository.  
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func new_directory(repository_id : Text, name : Text, parent_path:?Text) : async Result.Result<Types.IdUrl, Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+	public shared ({ caller }) func new_directory(repository_id : Text, name : Text, parent_path:?Text, ttl:?Nat) : async Result.Result<Types.IdUrl, Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.new_directory(name, parent_path);
+				await bucket_actor.new_directory(name, parent_path, ttl);
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -283,7 +329,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_resource(repository_id : Text, resource_id : Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
@@ -291,7 +337,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 					id = resource_id;
 					action = #Delete;
 					name = null;
-					directory = null;
+					parent_path = null; parent_id = null;
+					ttl = null;
 				});
 			};
 			case (null) {
@@ -305,7 +352,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func rename_resource(repository_id : Text, resource_id : Text, name:Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
@@ -313,7 +360,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 					id = resource_id;
 					action = #Rename;
 					name = ?name;
-					directory = null;
+					parent_path = null; parent_id = null;
+					ttl = null;
 				});
 			};
 			case (null) {
@@ -323,26 +371,50 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	/**
-	* Moves a resource into another directory.
+	* Renames a resource. If name is not specified, the the existing name is taken and appended with a "COPY" prefix.
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func move_resource(repository_id : Text, resource_id : Text, path:Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+	public shared ({ caller }) func copy_resource(repository_id : Text, resource_id : Text, new_name: ?Text, new_path :?Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
 				await bucket_actor.execute_action({
 					id = resource_id;
-					action = #Rename;
-					name = null;
-					directory = ?path;
+					action = #Copy;
+					name = new_name;
+					parent_path = new_path; parent_id = null;
+					ttl = null;
 				});
 			};
 			case (null) {
 				return #err(#NotFound);
 			};
 		}
-	};			
+	};	
+
+	/**
+	* Set TTL of the resource.
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func set_ttl(repository_id : Text, resource_id : Text, ttl:?Nat) : async Result.Result<(Types.IdUrl), Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.execute_action({
+					id = resource_id;
+					action = #TTL;
+					name = null;
+					parent_path = null; parent_id = null;
+					ttl = ttl;
+				});
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};	
 
 	public query func get_repository_records() : async [Types.RepositoryView] {
 		return Iter.toArray(Iter.map (Trie.iter(repositories), 
@@ -359,6 +431,16 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			};
 		}
 	};
+
+	public query func get_status() : async Types.PartitionStatus {
+		return {
+			cycles = Utils.get_cycles_balance();
+			memory_mb = Utils.get_memory_in_mb();
+			heap_mb = Utils.get_heap_in_mb();
+			files = null;
+			directories = null;
+		};
+	};	
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))

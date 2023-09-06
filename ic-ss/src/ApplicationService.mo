@@ -156,6 +156,13 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 			case (?app) {
 				// access control : application owner
 				if (app.owner != caller) return #err(#NotAuthorized);
+				let ic_storage_wallet : Types.Wallet = actor (id);
+				/**
+				*  send cycles to "application service canister" in case of removing a application canister.
+				*  right now, remainder_cycles is a constant, the idea is to leave some funds to process the request
+				*/
+				await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
+
 				await management_actor.stop_canister({canister_id = app_principal});
 				await management_actor.delete_canister({canister_id = app_principal});
 				applications := Trie.remove(applications, Utils.principal_key(app_principal), Principal.equal).0;

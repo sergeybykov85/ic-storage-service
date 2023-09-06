@@ -3,7 +3,7 @@ import Blob "mo:base/Blob";
 import Buffer "mo:base/Buffer";
 import Char "mo:base/Char";
 import Debug "mo:base/Debug";
-import ExperimentalCycles "mo:base/ExperimentalCycles";
+import Cycles "mo:base/ExperimentalCycles";
 import Float "mo:base/Float";
 import List "mo:base/List";
 import Int "mo:base/Int";
@@ -114,7 +114,7 @@ module {
     };
 
     public func get_cycles_balance() : Int {
-        return ExperimentalCycles.balance();
+        return Cycles.balance();
     };
 
     public func join<T>(a: [T], b:[T]) : [T] {
@@ -151,6 +151,7 @@ module {
             content_size = info.content_size;
             created = info.created;
             name = info.name;
+            ttl = info.ttl;
             url = build_resource_url({
 				resource_id = id;
 				canister_id = canister_id;

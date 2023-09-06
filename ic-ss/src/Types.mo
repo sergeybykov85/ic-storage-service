@@ -13,17 +13,13 @@ module {
 		value : Text;
 	};
 	
-	public type Wallet = actor {
-    	wallet_receive : () -> async ();
-    };
-
 	// state of the bucket or repository itself
 	public type PartitionStatus = {
 		cycles : Int;
 		memory_mb : Int;
 		heap_mb : Int;
-		files : Nat;
-		directories : Nat;
+		files : ?Nat;
+		directories : ?Nat;
 	};
 
 	public type ApprovedCustomer = {
@@ -127,25 +123,31 @@ module {
 		content_type : ?Text;
 		name : Text;
 		// input argument, directory name
-		directory : ?Text;
+		parent_path : ?Text;
+		// direcotry id. It has a precedence over the parent_path
+		parent_id : ?Text;
+		ttl : ?Nat;
 	};
 
 	public type ResourceAction = {
 		#Copy;
 		#Delete;
 		#Rename;
+		#TTL;
 	};
 	// Type contains possible required data to make some action with an existing resource
 	public type ActionResourceArgs = {
 		id : Text;
 		action : ResourceAction;
 		name : ?Text;
-		directory : ?Text;
+		parent_path : ?Text;
+		ttl : ?Nat;
 	};	
 
 	public type Resource = {
 		resource_type : ResourceType;
 		var http_headers : [(Text, Text)];
+		var ttl : ?Nat;
 		content_size : Nat;
 		created : Int;
 		var name : Text;
@@ -161,6 +163,7 @@ module {
 		id : Text;
 		resource_type : ResourceType;
 		content_size : Nat;
+		ttl : ?Nat;
 		created : Int;
 		name : Text;
 		url : Text;
@@ -250,10 +253,15 @@ module {
         } -> async ();
     };
 
+	public type Wallet = actor {
+    	wallet_receive : () -> async ();
+		withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
+    };	
+
     public type DataBucketActor = actor {
-        withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
-		new_directory : shared (name : Text, parent_path:?Text) -> async Result.Result<IdUrl, Errors>;
-        get_status : shared query () -> async PartitionStatus;		
+		new_directory : shared (name : Text, parent_path:?Text, ttl:?Nat) -> async Result.Result<IdUrl, Errors>;
+        get_status : shared query () -> async PartitionStatus;
+		clean_up : shared () -> async ();	
 		execute_action : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
 		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
