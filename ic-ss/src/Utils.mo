@@ -126,6 +126,15 @@ module {
     	Buffer.toArray(res);
     };
 
+    public func include<T>(a: [T], b : T) : [T] {
+		// Array.append is deprecated and it gives a warning
+    	let capacity : Nat = Array.size(a) + 1;
+    	let res = Buffer.Buffer<T>(capacity);
+    	for (p in a.vals()) { res.add(p); };
+    	res.add(b);        
+    	Buffer.toArray(res);
+    };    
+
     /**
     * Builds a "view" object which represents repository entity
     */

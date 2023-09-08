@@ -90,6 +90,21 @@ module {
 		#Advanced;
 	};
 
+	public type TierSettingsArg = {
+		number_of_applications : ?Nat;
+		number_of_repositories : ?Nat;
+		private_repository_allowed : ?Bool;
+		nested_directory_allowed : ?Bool;
+	};
+
+	public type TierSettings = {
+		number_of_applications : Nat;
+		number_of_repositories : Nat;
+		private_repository_allowed : Bool;
+		nested_directory_allowed : Bool;
+		created : Time.Time;
+	};
+
 	public type Network = {
         #IC;
         #Local: Text; // host details like localhost:4943
@@ -124,7 +139,7 @@ module {
 		name : Text;
 		// input argument, directory name
 		parent_path : ?Text;
-		// direcotry id. It has a precedence over the parent_path
+		// direcotry id. It has a precedence over the parent_path, but this field is not supported in all methods
 		parent_id : ?Text;
 		ttl : ?Nat;
 	};
@@ -187,6 +202,8 @@ module {
 		network : Network;
 		// list of operators to work with the service
 		operators : [Principal];
+		// if specified, then this list is included into controllers list for any "registered" canisters 
+		spawned_canister_controllers : [Principal];		
 		// default cycles sent to any new application
 		cycles_app_init : ?Nat;
 		// default cycles sent to a new bucket (application --> repo)
@@ -199,6 +216,8 @@ module {
 		tier : ServiceTier;
 		// operators to work with a repo
 		operators : [Principal];
+		// if specified, then this list is included into controllers list for any "registered" canisters 
+		spawned_canister_controllers : [Principal];
 		// initial amount of cycles for any new bucket
 		cycles_bucket_init : Nat;
 	};	
@@ -221,8 +240,10 @@ module {
 	};
 
 	public type Errors = {
-		// not authorized
-        #NotAuthorized;
+		// Tier is not registered
+        #TierNotFound;
+		// Tier restriction
+        #TierRestriction;		
 		// no resource or no chunk
 		#NotFound;
 		// record already registered
@@ -239,9 +260,6 @@ module {
 
     public type ICSettingsArgs = {
         controllers : ?[Principal];
-        freezing_threshold : ?Nat;
-        memory_allocation : ?Nat;
-        compute_allocation : ?Nat;
     };	
 
     public type ICManagementActor = actor {
@@ -259,10 +277,10 @@ module {
     };	
 
     public type DataBucketActor = actor {
-		new_directory : shared (name : Text, parent_path:?Text, ttl:?Nat) -> async Result.Result<IdUrl, Errors>;
+		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async PartitionStatus;
 		clean_up : shared () -> async ();	
-		execute_action : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;
+		execute_action_on_resource : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
 		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
 		commit_batch : shared (chunk_ids : [Text], resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;

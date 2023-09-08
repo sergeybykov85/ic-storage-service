@@ -68,8 +68,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
     	whitelist_customers := Utils.join(whitelist_customers, ids);
     };	
 
-	public shared ({ caller }) func access_list() : async (Types.AccessList) {
-		assert(caller == OWNER or _is_operator(caller));
+	public query func access_list() : async (Types.AccessList) {
 		return { owner = OWNER; operators = operators }
 	};
 
@@ -155,7 +154,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		switch (application_get(app_principal)) {
 			case (?app) {
 				// access control : application owner
-				if (app.owner != caller) return #err(#NotAuthorized);
+				if (app.owner != caller) return #err(#AccessDenied);
 				let ic_storage_wallet : Types.Wallet = actor (id);
 				/**
 				*  send cycles to "application service canister" in case of removing a application canister.
@@ -184,10 +183,21 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					// default cycles value to be used for any new bucket
 					cycles_bucket_init = CYCLES_BUCKET_INIT;
 					operators = [to];
+					// owner of the application service is a controller for any "spawned" canisters!
+					spawned_canister_controllers = initArgs.spawned_canister_controllers;
 					network = initArgs.network;
 				});
 				
 				let application_principal = Principal.fromActor(application_actor);
+
+				// IC ApplicationService is a controller of the application. but other users could be added here
+				if (Array.size(initArgs.spawned_canister_controllers) > 0){
+					ignore management_actor.update_settings({
+						canister_id = application_principal;
+						settings = { controllers = ? Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
+					});
+				};
+
 				let app_id = Principal.toText(application_principal);
 				let app : Types.CustomerApp = {
 					var name = name;

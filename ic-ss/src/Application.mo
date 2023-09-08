@@ -30,9 +30,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
     private func repository_get(id : Text) : ?Types.Repository = Trie.get(repositories, Utils.text_key(id), Text.equal);	
 
-	public shared query func initParams() : async (Types.ApplicationArgs) {
-		return initArgs;
-	};		
+		
 	/**
 	* Applies list of operators for the storage service
 	*/
@@ -44,15 +42,18 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
     public shared ({ caller }) func apply_tier (v: Types.ServiceTier) {
     	assert(caller == OWNER);
     	tier := v;
-    };	
+    };
+
+	public query func get_tier() : async Types.ServiceTier {
+		return tier;
+	};	
 
     public shared ({ caller }) func apply_cycles_bucket_init(v: Nat) {
 		assert(caller == OWNER or _is_operator(caller));
     	cycles_bucket_init:=v;
     };	
 
-	public shared ({ caller }) func access_list() : async (Types.AccessList) {
-		assert(caller == OWNER or _is_operator(caller));
+	public shared query func access_list() : async (Types.AccessList) {
 		return { owner = OWNER; operators = operators };
 	};
 
@@ -90,10 +91,10 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		let bucket_name = debug_show({
 			application = Principal.fromActor(this);
 			repository_name = name;
-			bucket = "bucket_1";
+			bucket = "data bucket";
 		});
 		// create a new bucket
-		let bucket = await _register_bucket([caller], bucket_name, cycles_assign);
+		let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
 
 		// generate repository id
 		let hex = Utils.hash_time_based(Principal.toText(Principal.fromActor(this)), next_id);
@@ -245,15 +246,15 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		}
 	};
 	/**
-	* Registers  a new folder (empty) in the active bucket of the specified repository.  
+	* Registers a new directory (empty) in the active bucket of the specified repository.  
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func new_directory(repository_id : Text, name : Text, parent_path:?Text, ttl:?Nat) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func new_directory(repository_id : Text, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.new_directory(name, parent_path, ttl);
+				await bucket_actor.new_directory(args);
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -325,96 +326,23 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};	
 
 	/**
-	* Deletes a resource from the specified repository
+	* Execute an action on the resource (copy, rename, delete, set ttl).
+	* Right now rename of the directory is not supprted, copy of the directory is not suppprted yet.
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func delete_resource(repository_id : Text, resource_id : Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
+	public shared ({ caller }) func execute_action_on_resource(repository_id : Text, args:Types.ActionResourceArgs) : async Result.Result<(Types.IdUrl), Types.Errors> {
 		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.execute_action({
-					id = resource_id;
-					action = #Delete;
-					name = null;
-					parent_path = null; parent_id = null;
-					ttl = null;
-				});
-			};
-			case (null) {
-				return #err(#NotFound);
-			};
-		}
-	};
-
-	/**
-	* Renames a resource. This method assumes, that resource is not moved between directories
-	* Allowed only to the owner or operator of the app.
-	*/
-	public shared ({ caller }) func rename_resource(repository_id : Text, resource_id : Text, name:Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		switch (repository_get(repository_id)) {
-			case (?repo) {
-				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.execute_action({
-					id = resource_id;
-					action = #Rename;
-					name = ?name;
-					parent_path = null; parent_id = null;
-					ttl = null;
-				});
-			};
-			case (null) {
-				return #err(#NotFound);
-			};
-		}
-	};
-
-	/**
-	* Renames a resource. If name is not specified, the the existing name is taken and appended with a "COPY" prefix.
-	* Allowed only to the owner or operator of the app.
-	*/
-	public shared ({ caller }) func copy_resource(repository_id : Text, resource_id : Text, new_name: ?Text, new_path :?Text) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		switch (repository_get(repository_id)) {
-			case (?repo) {
-				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.execute_action({
-					id = resource_id;
-					action = #Copy;
-					name = new_name;
-					parent_path = new_path; parent_id = null;
-					ttl = null;
-				});
+				await bucket_actor.execute_action_on_resource(args);
 			};
 			case (null) {
 				return #err(#NotFound);
 			};
 		}
 	};	
-
-	/**
-	* Set TTL of the resource.
-	* Allowed only to the owner or operator of the app.
-	*/
-	public shared ({ caller }) func set_ttl(repository_id : Text, resource_id : Text, ttl:?Nat) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		switch (repository_get(repository_id)) {
-			case (?repo) {
-				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.execute_action({
-					id = resource_id;
-					action = #TTL;
-					name = null;
-					parent_path = null; parent_id = null;
-					ttl = ttl;
-				});
-			};
-			case (null) {
-				return #err(#NotFound);
-			};
-		}
-	};	
+	
 
 	public query func get_repository_records() : async [Types.RepositoryView] {
 		return Iter.toArray(Iter.map (Trie.iter(repositories), 
@@ -460,15 +388,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
 		let bucket_principal = Principal.fromActor(bucket_actor);
 		// IC Application is a controller of the bucket. but other users could be added here
-		ignore management_actor.update_settings({
-			canister_id = bucket_principal;
-			settings = {
-				controllers = ? [Principal.fromActor(this)];
-				freezing_threshold = ?2_592_000;
-				memory_allocation = ?0;
-				compute_allocation = ?0;
-			};
-		});
+		if (Array.size(initArgs.spawned_canister_controllers) > 0){
+			ignore management_actor.update_settings({
+				canister_id = bucket_principal;
+				settings = { controllers = ? Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
+			});
+		};
 		return Principal.toText(bucket_principal);
 	};	
 
