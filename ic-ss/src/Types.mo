@@ -111,7 +111,7 @@ module {
     };
 
 	public type ViewMode = {
-		#Names;     // names could be used as a part of browser url
+		#Index;     // index, names could be used as a part of browser url
 		#Open;      // references to the resource by its hash
 		#Download;  // reference to the resource by its hash, download in browser
 	};
@@ -204,10 +204,9 @@ module {
 		operators : [Principal];
 		// if specified, then this list is included into controllers list for any "registered" canisters 
 		spawned_canister_controllers : [Principal];		
-		// default cycles sent to any new application
-		cycles_app_init : ?Nat;
-		// default cycles sent to a new bucket (application --> repo)
-		cycles_bucket_init : ?Nat;
+		// canister id of the config service
+		configuration_service : ?Text;
+
 	};
 
 	public type ApplicationArgs = {
@@ -218,8 +217,8 @@ module {
 		operators : [Principal];
 		// if specified, then this list is included into controllers list for any "registered" canisters 
 		spawned_canister_controllers : [Principal];
-		// initial amount of cycles for any new bucket
-		cycles_bucket_init : Nat;
+		// canister id of the config service
+		configuration_service : Text;
 	};	
 
 	public type BucketArgs = {
@@ -252,6 +251,8 @@ module {
         #OperationNotAllowed;
         // not registered
         #NotRegistered;
+		// when input argument contains wrong value
+		#InvalidRequest;
         // exceeded allowed items
         #ExceededAllowedLimit;	
 		// not authorized to manage certain object
@@ -274,7 +275,13 @@ module {
 	public type Wallet = actor {
     	wallet_receive : () -> async ();
 		withdraw_cycles : shared {to : Principal; remainder_cycles : ?Nat} -> async ();
-    };	
+    };
+
+	public type ConfigurationServiceActor = actor {
+        get_remainder_cycles : shared query () -> async Nat;
+		get_app_init_cycles : shared query () -> async Nat;
+		get_bucket_init_cycles : shared query () -> async Nat;
+	};
 
     public type DataBucketActor = actor {
 		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
@@ -285,6 +292,6 @@ module {
 		store_chunk : shared (content : Blob, binding_key : ?Text ) -> async Result.Result<Text, Errors>;
 		commit_batch : shared (chunk_ids : [Text], resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
 		commit_batch_by_key : shared (binding_key:Text, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;
-	};			
+	};		
 
 };

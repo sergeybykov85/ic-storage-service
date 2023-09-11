@@ -273,6 +273,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	*/
 	public shared ({ caller }) func new_directory(args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (Utils.invalid_name(args.name)) return #err(#InvalidRequest);
 		let canister_id = Principal.toText(Principal.fromActor(this));	
 		var parent_directory_id:?Text = null;
 		var parent_opt : ?Types.Resource = null;
@@ -339,14 +340,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (?r) {
 				let path_size = Array.size(r.0);
 				let resouce_id = switch (r.1) {
-					case (#Names) {
+					case (#Index) {
 						let canister_id = Principal.toText(Principal.fromActor(this));
 						if (path_size == 0) {
 							ROOT;
 						}
 						else if (path_size == 1) {
 							Utils.hash(canister_id, r.0);
-						}else {
+						} else {
 							let by_names = Utils.hash(canister_id, r.0);
         					switch (resources.get(by_names)) {
 								case (?d) {by_names;};
@@ -401,31 +402,74 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	private func clickable_path (path:Text, canister_id:Text) : Text {
 		var html:Text = "";
-		let root_url = Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = NETWORK; view_mode = #Names});
+		let root_url = Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 		var full_path:Text = "";
 		for (p in Text.tokens(path, #char '/')) {
 			if (full_path == "") { full_path:=p; }
 			else { full_path:=full_path#"/"#p; };
-			let url = Utils.build_resource_url({resource_id = full_path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
+			let url = Utils.build_resource_url({resource_id = full_path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 			html := html # "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # url # "\" >"#p#"</a> /</div>";
 		};
 		return "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # root_url # "\" >"#ROOT#"</a></div>"# html;
+	};
+
+	private func render_resource (canister_id: Text, id:Text, r:Types.Resource, directory_path:?Text) : Text {
+		let path = switch (directory_path) {
+			case (?p) {p # "/" # r.name;}; 
+			case (null) {r.name;};
+		};		
+		switch (r.resource_type) {
+		case (#Directory) {
+			let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
+			return "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
+		};
+		case (#File) {
+			var resource_html = "";
+			let url_download = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Download});
+			switch (r.parent) {
+				case (?p) {
+					// under the directory
+					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
+					let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
+					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:25px;\" href=\"" # url_raw #"\" target = \"_blank\"> raw link</a>";
+					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
+	
+				};
+				case (null) {
+					let url = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
+					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
+					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
+
+				};
+
+			};
+		};
+		};
+	};
+
+    private func root_view (view_mode : Types.ViewMode) : Http.Response {
+		switch (view_mode) {
+			case (#Index) {
+				let canister_id = Principal.toText(Principal.fromActor(this));
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128193; / </h2><hr/>";
+
+				for ((id, r) in resources.entries()) {
+					if (Option.isNull(r.parent)) {
+						directory_html := directory_html # render_resource(canister_id, id, r, null);
+					};
+				};
+				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</body></html>"));
+			};
+			case (_) {Http.not_found()};
+		};
 	};	
 
     private func resource_http_handler(key : Text, view_mode : Types.ViewMode, callback : Http.StreamingCallback) : Http.Response {
-		if (key == ROOT and view_mode == #Names) {
-			let canister_id = Principal.toText(Principal.fromActor(this));
-			var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128193; / </h2><hr/>";
-
-			for (r in resources.vals()) {
-				if (r.resource_type == #Directory and Option.isNull(r.parent)){
-					let path = r.name;
-					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
-					directory_html := directory_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_blank\">"# r.name # "</a></div>";
-				};
-			};
-			directory_html := directory_html # "</body></html>";					
-			return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html));			
+		if (key == ROOT) {
+			return root_view (view_mode);
 		};
 
 		switch (resources.get(key)) {
@@ -448,23 +492,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					};
 					// render dirs
 					Buffer.iterate<(Text, Types.Resource)>(dirs, func (id, r) {
-						let path = directory_path # "/" # r.name;
-						let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
-						directory_html := directory_html # "<div style=\"margin:10px;\"> &#128193;<a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_blank\">"# r.name # "</a></div>";
+						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path);
 					});					
 					// render files
 					Buffer.iterate<(Text, Types.Resource)>(files, func (id, r) {
-						let path = directory_path # "/" # r.name;
-						let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Names});
-						let url_download = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Download});
-						let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
-						directory_html := directory_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_blank\">"# r.name # "</a>";
-						directory_html := directory_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
-						directory_html := directory_html # "<a style=\"float:right; padding-right:25px;\" href=\"" # url_raw #"\" target = \"_blank\"> raw link</a>";
-						directory_html := directory_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
+						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path);
 					});
-					directory_html := directory_html # "</body></html>";					
-					return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html));
+					return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</body></html>"));
 				};
 
 				let headers = switch (view_mode) {
@@ -502,17 +536,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	*/
 	public shared ({ caller }) func commit_batch_by_key(binding_key : Text, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-
 		switch(chunk_bindings.get(binding_key)) {
 			case (?binding){
 				if (List.size(binding.chunks) == 0) return #err(#NotFound);
 				// validate chunks in any way
 				let ar = List.toArray(List.reverse(binding.chunks));
 
+				// commit batch based on the chunk ids matched to binding key
+				let r = _commit_batch(ar, resource_args, caller);
 				// remove binding key
 				chunk_bindings.delete(binding_key);
-				// commit batch based on the chunk ids matched to binding key
-				_commit_batch(ar, resource_args, caller);
+				r;
 			};
 			case (null){
 				return #err(#NotFound);
@@ -606,6 +640,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* If htto_headers are specified, then applies them otherwise build sinlge http header based on the content type
 	*/
 	private func _store_resource(payload : [Blob], resource_args : Types.ResourceArgs, http_headers: ?[(Text,Text)]) : Result.Result<Types.IdUrl, Types.Errors> {
+		if (Utils.invalid_name(resource_args.name)) return #err(#InvalidRequest);
 		// increment counter
 		_internal_increment  := _internal_increment + 1;
 		let canister_id = Principal.toText(Principal.fromActor(this));
@@ -683,7 +718,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				// directory rename is not supported yet
 				if (res.resource_type == #Directory) { return #err(#OperationNotAllowed); };
 				let canister_id = Principal.toText(Principal.fromActor(this));				
-				let file_name = Option.get(args.name, res.name);				
+				let file_name = Option.get(args.name, res.name);
+				if (Utils.invalid_name(file_name)) return #err(#InvalidRequest);				
 				if (file_name == res.name) {return #err(#DuplicateRecord);};
 				switch (res.parent) {
 					case (?parent) {
@@ -745,6 +781,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				if (res.resource_type == #Directory) { return #err(#OperationNotAllowed); };
 				let canister_id = Principal.toText(Principal.fromActor(this));
 				let file_name = Option.get(args.name, "COPY_"#Int.toText(Time.now())#"_"#res.name);
+				if (Utils.invalid_name(file_name)) return #err(#InvalidRequest);
 				// check further name under the directory to guarantee uniq name (only for directory)
 				var parent_id:?Text = null;
 				// destination folder : mentioned directory id (priority 1) OR current directory (priority 2)
@@ -793,9 +830,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};	
 
 	private func _commit_batch(chunk_ids : [Text], resource_args : Types.ResourceArgs, owner : Principal) : Result.Result<Types.IdUrl, Types.Errors> {
+		if (Utils.invalid_name(resource_args.name)) return #err(#InvalidRequest);
 		// entire content of all chunks
 		var content = Buffer.Buffer<Blob>(0);
 		var content_size = 0;
+		
 		
 		// logic of validation could be extended
 		switch(validate_chunks(chunk_ids)) {

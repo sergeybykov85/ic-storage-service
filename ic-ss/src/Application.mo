@@ -21,10 +21,11 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
     let OWNER = installation.caller;
 
  	stable var operators = initArgs.operators;
-	stable var cycles_bucket_init = initArgs.cycles_bucket_init;
 	stable var tier  = initArgs.tier;
 
 	stable var repositories : Trie.Trie<Text, Types.Repository> = Trie.empty();
+
+	stable var configuration_service =  initArgs.configuration_service;
 
 	let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
 
@@ -48,10 +49,6 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		return tier;
 	};	
 
-    public shared ({ caller }) func apply_cycles_bucket_init(v: Nat) {
-		assert(caller == OWNER or _is_operator(caller));
-    	cycles_bucket_init:=v;
-    };	
 
 	public shared query func access_list() : async (Types.AccessList) {
 		return { owner = OWNER; operators = operators };
@@ -85,7 +82,13 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	public shared ({ caller }) func register_repository (name : Text, description : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		let next_id = Trie.size(repositories) + 1;
-		let cycles_assign = Option.get(cycles, cycles_bucket_init);
+		let cycles_assign = switch (cycles) {
+			case (?c) {c;};
+			case (null) {
+				let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+				await configuration_actor.get_bucket_init_cycles();	
+			};
+		};		
 		
 		// first vision how to create "advanced bucket name" to have some extra information
 		let bucket_name = debug_show({
@@ -121,11 +124,14 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				for (bucket_id in List.toIter(repo.buckets)){
 					let bucket = Principal.fromText(bucket_id);
 					let ic_storage_wallet : Types.Wallet = actor (bucket_id);
+
+					let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+					let remainder_cycles = await configuration_actor.get_remainder_cycles();
 					/**
 					*  send cycles to "application canister" in case of removing a bucket canister.
 					*  right now, remainder_cycles is a constant, the idea is to leave some funds to process the request
 					*/
-					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
+					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?remainder_cycles});
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
 				};
@@ -176,7 +182,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				if (Option.isSome(List.find(repo.buckets, func (x: Text) : Bool { x == bucket_id }))) {
 					let bucket = Principal.fromText(bucket_id);
 					let ic_storage_wallet : Types.Wallet = actor (bucket_id);
-					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});				
+					let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+					let remainder_cycles = await configuration_actor.get_remainder_cycles();
+					await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?remainder_cycles});				
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
 					// exclude bucket id
@@ -202,7 +210,13 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
-				let cycles_assign = Option.get(cycles, cycles_bucket_init);
+				let cycles_assign = switch (cycles) {
+					case (?c) {c;};
+					case (null) {
+						let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+						await configuration_actor.get_bucket_init_cycles();
+					};
+				};
 				// first version of the name. Other format might be applied later 
 				let bucket_name = debug_show({
 					application = Principal.fromActor(this);

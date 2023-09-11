@@ -28,16 +28,18 @@ module {
     '0', '1', '2', '3', '4', '5', '6', '7',
     '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
     ];
+
+    let NOT_ALLOWED_FOR_NAME = ['\u{22}','/',',','#', '@', '?', '+',';',':','$','=','[',']','~','^','|','<','>','{','}'];
     // 1MB
     let MB_IN_BYTES:Int = 1_048_576;
    
-   
+    let INDEX_ROUTE = "/i/";
     // it is a http route to open/read any type of resource by its ID
     let RESOURCE_ROUTE = "/r/";
     // it is a http route to download resource by its ID
     let DOWNLOAD_ROUTE = "/d/";
     // it is a http route when names insead of ids are used to identify a resource
-    let NAME_BASED_ROUTE = "/ns/";
+    //let NAME_BASED_ROUTE = "/ns/";
 
     private type ResourceUrlArgs = {
         resource_id : Text;
@@ -64,13 +66,25 @@ module {
             let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
             return ?([filter_query_params[0]], #Download);            
         };        
-        if (Text.startsWith(url, #text NAME_BASED_ROUTE)) {
-            let tokens_iter = Text.tokens(unwrap(Text.stripStart(url, #text NAME_BASED_ROUTE)) , #char '/');
-            let tokens = Array.map<Text, Text>(Iter.toArray(tokens_iter), func (x: Text): Text = Text.replace(x, #text "%20", " "));
-            return ?(tokens, #Names);      
+        if (Text.startsWith(url, #text INDEX_ROUTE)) {
+            let tokens_iter = Text.tokens(unwrap(Text.stripStart(url, #text INDEX_ROUTE)) , #char '/');
+            let tokens = Array.map<Text, Text>(Iter.toArray(tokens_iter), func (x: Text): Text = un_escape_browser_token(x)  );
+            return ?(tokens, #Index);      
         };
 
         return null;
+    };
+
+    private func un_escape_browser_token (token : Text) : Text {
+        Text.replace(Text.replace(token, #text "%20", " "), #text "%2B", "+")
+    };
+
+    private func contains_invalid_symbol (id:Char) : Bool  {
+        Option.isSome(Array.find(NOT_ALLOWED_FOR_NAME, func (x: Char) : Bool { x == id } ));
+    };
+
+    public func invalid_name (name : Text) : Bool {
+        Text.contains(name, #predicate (func(c) {contains_invalid_symbol(c)})  );
     };    
 
     /**
@@ -78,7 +92,7 @@ module {
     */
     public func build_resource_url(args : ResourceUrlArgs) : Text {
         let router_id = switch (args.view_mode) {
-            case (#Names) {NAME_BASED_ROUTE};
+            case (#Index) {INDEX_ROUTE};
             case (#Open) {RESOURCE_ROUTE};
             case (#Download) {DOWNLOAD_ROUTE};
         };

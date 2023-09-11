@@ -32,8 +32,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 
 	stable var customers : Trie.Trie<Principal, Types.Customer> = Trie.empty();
 
-	let CYCLES_APP_INIT = Option.get(initArgs.cycles_app_init, 90_000_000_000);
-	let CYCLES_BUCKET_INIT = Option.get(initArgs.cycles_bucket_init, 40_000_000_000);
+	stable var configuration_service =  Option.get(initArgs.configuration_service, "");
 
 	let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
 
@@ -156,11 +155,14 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				// access control : application owner
 				if (app.owner != caller) return #err(#AccessDenied);
 				let ic_storage_wallet : Types.Wallet = actor (id);
+
+				let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+				let remainder_cycles = await configuration_actor.get_remainder_cycles();
 				/**
 				*  send cycles to "application service canister" in case of removing a application canister.
 				*  right now, remainder_cycles is a constant, the idea is to leave some funds to process the request
 				*/
-				await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?10_000_000_000});
+				await ic_storage_wallet.withdraw_cycles({to = Principal.fromActor(this); remainder_cycles = ?remainder_cycles});
 
 				await management_actor.stop_canister({canister_id = app_principal});
 				await management_actor.delete_canister({canister_id = app_principal});
@@ -176,12 +178,17 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	private func _register_application (name : Text, description : Text, to : Principal, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		switch (customer_get(to))	{
 			case (?customer) {
-				let cycles_assign = Option.get(cycles, CYCLES_APP_INIT);
+				let cycles_assign = switch (cycles) {
+					case (?c) {c;};
+					case (null) {
+						let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+						await configuration_actor.get_app_init_cycles();
+					};
+				};
 				Cycles.add(cycles_assign);
 				let application_actor = await Application.Application({
 					tier = customer.tier;
-					// default cycles value to be used for any new bucket
-					cycles_bucket_init = CYCLES_BUCKET_INIT;
+					configuration_service = configuration_service;
 					operators = [to];
 					// owner of the application service is a controller for any "spawned" canisters!
 					spawned_canister_controllers = initArgs.spawned_canister_controllers;
