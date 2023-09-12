@@ -75,6 +75,7 @@ module {
         return null;
     };
 
+
     private func un_escape_browser_token (token : Text) : Text {
         Text.replace(Text.replace(token, #text "%20", " "), #text "%2B", "+")
     };
@@ -159,6 +160,7 @@ module {
             description = info.description;
             buckets = List.toArray(info.buckets);
             active_bucket = info.active_bucket;
+            scaling_strategy = info.scaling_strategy;
 			created = info.created;
         };
     };

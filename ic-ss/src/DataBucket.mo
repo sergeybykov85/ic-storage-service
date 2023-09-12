@@ -657,7 +657,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				case (?p) {p;};
 				case (null) {
 					let path_tokens : [Text] = Iter.toArray(Text.tokens(Utils.unwrap(resource_args.parent_path), #char '/'));
-					Utils.hash(canister_id, path_tokens);					
+					Utils.hash(canister_id, path_tokens);				
 				};
 			};
 
@@ -785,24 +785,36 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				// check further name under the directory to guarantee uniq name (only for directory)
 				var parent_id:?Text = null;
 				// destination folder : mentioned directory id (priority 1) OR current directory (priority 2)
+				
 				if (Option.isSome(res.parent) or Option.isSome(args.parent_path)) {
 					// passed directory path
 					//var directory_id:Text = null;
 					let directory_id = switch(res.parent) {
 						case (?p) { p;};
 						case (null) {
-							let path_tokens : [Text] = Iter.toArray(Text.tokens(Utils.unwrap(args.parent_path), #char '/'));
-							Utils.hash(canister_id, path_tokens);
+							let path = Utils.unwrap(args.parent_path);
+							if (path == ROOT) {
+								ROOT;
+							}else {
+								let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
+								Utils.hash(canister_id, path_tokens);
+							};
 						};
 					};
-					// reject if directory is not exists
-					if (Option.isNull(resources.get(directory_id))) { return #err(#NotFound); };
 
-					// if resource is a part of directory, then name is uniq inside the directory
-					let resource_id = Utils.hash(canister_id, [directory_id, file_name]);	
-					// file already presend in the directory
-					if (Option.isSome(resources.get(resource_id))) { return #err(#DuplicateRecord); };
-					parent_id :=?directory_id;
+					if (directory_id == ROOT) {
+						parent_id :=null;
+					} else {
+						// reject if directory is not exists
+						if (Option.isNull(resources.get(directory_id))) { return #err(#NotFound); };
+
+						// if resource is a part of directory, then name is uniq inside the directory
+						let resource_id = Utils.hash(canister_id, [directory_id, file_name]);	
+						// file already presend in the directory
+						if (Option.isSome(resources.get(resource_id))) { return #err(#DuplicateRecord); };
+						parent_id :=?directory_id;
+					}
+
 				};
 				
 				let r_data = Option.get(resource_data_get(Option.get(res.did,"")), []);
@@ -865,8 +877,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			cycles = Utils.get_cycles_balance();
 			memory_mb = Utils.get_memory_in_mb();
 			heap_mb = Utils.get_heap_in_mb();
-			files = ?total_files;
+			chunks = chunk_state.size();
+			files = ? total_files;
 			directories = ?total_directories;
+			url = Utils.build_resource_url({resource_id = ""; canister_id = Principal.toText(Principal.fromActor(this)); network = NETWORK; view_mode = #Index});
+		
 		};
 	};
 

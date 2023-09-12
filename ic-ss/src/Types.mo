@@ -18,8 +18,10 @@ module {
 		cycles : Int;
 		memory_mb : Int;
 		heap_mb : Int;
+		chunks : Nat;
 		files : ?Nat;
 		directories : ?Nat;
+		url : Text;
 	};
 
 	public type ApprovedCustomer = {
@@ -33,6 +35,7 @@ module {
 		var description : Text;
 		identity : Principal;
 		tier : ServiceTier;
+		var tier_settings: TierSettings;
 		// principal id
 		var applications : List.List<Text>;
 		created: Time.Time;
@@ -67,6 +70,7 @@ module {
 		var description : Text;
 		var buckets : List.List<Text>;
 		var active_bucket : Text;
+		var scaling_strategy : ScalingStarategy;
 		created : Time.Time;
 	};
 
@@ -76,6 +80,7 @@ module {
 		description : Text;
 		buckets : [Text];
 		active_bucket : Text;
+		scaling_strategy : ScalingStarategy;
 		created : Time.Time;
 	};	
 
@@ -93,15 +98,15 @@ module {
 	public type TierSettingsArg = {
 		number_of_applications : ?Nat;
 		number_of_repositories : ?Nat;
-		private_repository_allowed : ?Bool;
-		nested_directory_allowed : ?Bool;
+		private_repository_forbidden : ?Bool;
+		nested_directory_forbidden : ?Bool;
 	};
 
 	public type TierSettings = {
 		number_of_applications : Nat;
 		number_of_repositories : Nat;
-		private_repository_allowed : Bool;
-		nested_directory_allowed : Bool;
+		private_repository_forbidden : Bool;
+		nested_directory_forbidden : Bool;
 		created : Time.Time;
 	};
 
@@ -109,6 +114,17 @@ module {
         #IC;
         #Local: Text; // host details like localhost:4943
     };
+
+	public type MemoryThreshold = {
+		memory_mb : Int; 
+		heap_mb : Int;
+	};
+
+	public type ScalingStarategy = {
+		#Disabled;
+		#Auto;
+		#Manual : MemoryThreshold;
+	};
 
 	public type ViewMode = {
 		#Index;     // index, names could be used as a part of browser url
@@ -213,6 +229,7 @@ module {
 		network : Network;
 		// tier or the opportunitites
 		tier : ServiceTier;
+		tier_settings : TierSettings;
 		// operators to work with a repo
 		operators : [Principal];
 		// if specified, then this list is included into controllers list for any "registered" canisters 
@@ -278,9 +295,11 @@ module {
     };
 
 	public type ConfigurationServiceActor = actor {
+		get_scaling_memory_options : shared query () -> async MemoryThreshold;
         get_remainder_cycles : shared query () -> async Nat;
 		get_app_init_cycles : shared query () -> async Nat;
 		get_bucket_init_cycles : shared query () -> async Nat;
+		get_tier_settings : shared query (t:ServiceTier) -> async Result.Result<TierSettings, Errors>;
 	};
 
     public type DataBucketActor = actor {

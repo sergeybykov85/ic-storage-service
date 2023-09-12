@@ -23,6 +23,8 @@ shared (installation) actor class ServiceConfig() = this {
 
 	stable var bucket_init_cycles: Nat = 50_000_000_000;
 
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 20; memory_mb = 4_000_000};
+
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
 
@@ -32,13 +34,6 @@ shared (installation) actor class ServiceConfig() = this {
 
     private func tier_equal(t1: Types.ServiceTier, t2: Types.ServiceTier): Bool  {t1 == t2;};
 
-    /*private func tier_str (t:Types.ServiceTier) : Text {
-        switch (t) {
-            case (#Free) {"Free"};
-            case (#Standard) {"Standard";};
-            case (#Advanced) {"Advanced";};
-        }
-    };*/
 
     private func tier_hash(t : Types.ServiceTier) : Hash.Hash {
         (switch (t) {
@@ -65,23 +60,27 @@ shared (installation) actor class ServiceConfig() = this {
 	* Allowed only to the owner user
 	*/
     public shared ({ caller }) func apply_operators(ids: [Principal]) {
-		assert(caller == OWNER);
+		//assert(caller == OWNER);
     	operators := ids;
     };
 
+	public shared ({ caller }) func apply_scaling_memory_options(v:Types.MemoryThreshold) {
+		//assert(caller == OWNER);
+    	scaling_memory_options:=v;
+    };
 
     public shared ({ caller }) func apply_remainder_cycles(v:Nat) {
-		assert(caller == OWNER);
+		//assert(caller == OWNER);
     	remainder_cycles:=v;
     };
 
     public shared ({ caller }) func apply_app_init_cycles(v:Nat) {
-		assert(caller == OWNER);
+		//assert(caller == OWNER);
     	app_init_cycles:=v;
     };
 
     public shared ({ caller }) func apply_bucket_init_cycles(v:Nat) {
-		assert(caller == OWNER);
+		//assert(caller == OWNER);
     	bucket_init_cycles:=v;
     };		
 
@@ -94,7 +93,7 @@ shared (installation) actor class ServiceConfig() = this {
 	* Allowed only to the owner user or operator.
 	*/
     public shared ({ caller }) func apply_tier_settings(t:Types.ServiceTier, settings:Types.TierSettingsArg) {
-    	assert(caller == OWNER or _is_operator(caller));
+    	//assert(caller == OWNER or _is_operator(caller));
         switch (tier_settings_get(t)) {
             case (?ext) {
                 let hist = switch (tier_settings_history_get(t)) {
@@ -108,8 +107,8 @@ shared (installation) actor class ServiceConfig() = this {
         tier_settings := Trie.put(tier_settings, tier_key(t),tier_equal, {
             number_of_applications = Option.get(settings.number_of_applications, 1);
 		    number_of_repositories = Option.get(settings.number_of_repositories, 1);
-		    private_repository_allowed = Option.get(settings.private_repository_allowed, false);
-		    nested_directory_allowed = Option.get(settings.nested_directory_allowed, false);
+		    private_repository_forbidden = Option.get(settings.private_repository_forbidden, false);
+		    nested_directory_forbidden = Option.get(settings.nested_directory_forbidden, false);
 		    created = Time.now();
         }).0;
     };
@@ -138,6 +137,13 @@ shared (installation) actor class ServiceConfig() = this {
 	public query func get_remainder_cycles() : async Nat {
 		return remainder_cycles;
 	};
+
+	/**
+	* Returns memory options to execute scaling strategy
+	*/
+	public query func get_scaling_memory_options() : async Types.MemoryThreshold {
+		return scaling_memory_options;
+	};	
 
 	/**
 	* Returns value of cycles to be assigned for any new app

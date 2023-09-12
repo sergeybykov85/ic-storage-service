@@ -1,5 +1,6 @@
 import Cycles "mo:base/ExperimentalCycles";
 import Array "mo:base/Array";
+import Debug "mo:base/Debug";
 import List "mo:base/List";
 import Iter "mo:base/Iter";
 import Map "mo:base/HashMap";
@@ -21,7 +22,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
     let OWNER = installation.caller;
 
  	stable var operators = initArgs.operators;
-	stable var tier  = initArgs.tier;
+	stable let tier  = initArgs.tier;
+	stable var tier_settings = initArgs.tier_settings;
 
 	stable var repositories : Trie.Trie<Text, Types.Repository> = Trie.empty();
 
@@ -40,14 +42,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
     	operators := ids;
     };
 
-    public shared ({ caller }) func apply_tier (v: Types.ServiceTier) {
-    	assert(caller == OWNER);
-    	tier := v;
-    };
-
-	public query func get_tier() : async Types.ServiceTier {
-		return tier;
-	};	
+	public query func get_tier_info() : async (Types.ServiceTier, Types.TierSettings) {
+		return (tier, tier_settings);
+	};		
 
 
 	public shared query func access_list() : async (Types.AccessList) {
@@ -81,6 +78,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	*/
 	public shared ({ caller }) func register_repository (name : Text, description : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		// control number of repositories
+		if (Trie.size(repositories) >= tier_settings.number_of_repositories) return #err(#TierRestriction);
+
 		let next_id = Trie.size(repositories) + 1;
 		let cycles_assign = switch (cycles) {
 			case (?c) {c;};
@@ -107,6 +107,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			var description = description;
 			var active_bucket = bucket;
 			var buckets = List.push(bucket, null);
+			var scaling_strategy = #Disabled;
 			created = Time.now();
 		};
 		repositories := Trie.put(repositories, Utils.text_key(hex), Text.equal, repo).0;
@@ -167,6 +168,89 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				return #err(#NotFound);
 			};
 		}
+	};
+
+	/**
+	* Applies a scaling strategy on the repository
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func apply_scaling_strategy_on_repository (repository_id : Text, value : Types.ScalingStarategy) : async Result.Result<Text, Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		Debug.print("apply_scaling_strategy_on_repository "#debug_show(value));
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				repo.scaling_strategy:=value;
+				await _check_execute_scaling_attempt (repo);
+				return #ok(repository_id);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};
+
+
+	/**
+	* Tries to execute scaling action
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func trigger_scaling_attempt (repository_id : Text) : async Result.Result<Text, Types.Errors> {
+		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		Debug.print("trigger_scaling_attempt on "#debug_show(repository_id));
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				if (repo.scaling_strategy == #Disabled) return #err(#OperationNotAllowed);
+				await _check_execute_scaling_attempt (repo);
+				return #ok(repository_id);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};	
+
+	private func _check_execute_scaling_attempt (repository : Types.Repository) : async (){
+		Debug.print("check scaling strategy "#repository.active_bucket);
+		let scaling_needed = switch (repository.scaling_strategy) {
+			case (#Disabled) {false;};
+			case (#Auto) {
+				Debug.print("  check scaling strategy Auto");
+				let bucket_actor : Types.DataBucketActor = actor (repository.active_bucket);
+				let bucket_status = await bucket_actor.get_status();
+				if (bucket_status.chunks == 0) {
+					let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+					let options = await configuration_actor.get_scaling_memory_options();
+					(bucket_status.memory_mb >= options.memory_mb or bucket_status.heap_mb >= options.heap_mb)
+				}
+				else  {false}
+			};
+			case (#Manual  memoryThreshold) {
+				Debug.print("  check scaling strategy Manual "#debug_show(memoryThreshold));
+				let bucket_actor : Types.DataBucketActor = actor (repository.active_bucket);
+				let bucket_status = await bucket_actor.get_status();
+				(bucket_status.chunks == 0 and (bucket_status.memory_mb >= memoryThreshold.memory_mb or bucket_status.heap_mb >= memoryThreshold.heap_mb));
+			};
+		};
+
+		if (scaling_needed) {
+			Debug.print("   scaling needed, scaling for the buclet "#repository.active_bucket);
+			let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+			let cycles_assign = await configuration_actor.get_bucket_init_cycles();
+			Debug.print("   scaling needed, cycles_assign "#debug_show(cycles_assign));
+			let bucket_name = debug_show({
+				application = Principal.fromActor(this);
+				repository_name = repository.name;
+				bucket = "bucket_"#Nat.toText(List.size(repository.buckets) + 1);
+			});
+			Debug.print("   try to create a new bucket "#bucket_name);
+			let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
+			Debug.print("   new  bucket "#bucket);
+			repository.buckets := List.push(bucket, repository.buckets);
+			// set the new bucker as an active one
+			repository.active_bucket := bucket;
+		};
+		return ();
+
 	};	
 
 	/**
@@ -267,6 +351,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
+				// control of nested directories
+				if  (tier_settings.nested_directory_forbidden and  (Option.isSome(args.parent_path) or Option.isSome(args.parent_id))) return #err(#TierRestriction);
+
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
 				await bucket_actor.new_directory(args);
 			};
@@ -285,7 +372,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.store_resource(content, resource_args);
+				let r = await bucket_actor.store_resource(content, resource_args);
+				await _check_execute_scaling_attempt (repo);
+				r;
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -322,7 +411,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				switch (details.binding_key){
+				let r = switch (details.binding_key){
 					case (?binding_key) {
 						// commint by key
 						await bucket_actor.commit_batch_by_key(binding_key, resource_args);
@@ -332,6 +421,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 						await bucket_actor.commit_batch(details.chunks, resource_args);						
 					};
 				};
+				await _check_execute_scaling_attempt (repo);
+				r;
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -373,16 +464,6 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			};
 		}
 	};
-
-	public query func get_status() : async Types.PartitionStatus {
-		return {
-			cycles = Utils.get_cycles_balance();
-			memory_mb = Utils.get_memory_in_mb();
-			heap_mb = Utils.get_heap_in_mb();
-			files = null;
-			directories = null;
-		};
-	};	
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))

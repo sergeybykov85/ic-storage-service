@@ -22,6 +22,8 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	// owner has a super power, do anything inside this actor and assign any list of operators
     stable let OWNER = installation.caller;
 
+	let TIER_ON_SIGNUP : Types.ServiceTier = #Free;
+
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators = initArgs.operators;
 
@@ -83,11 +85,18 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				return #err(#DuplicateRecord);
 			};
 			case (null) {
+				let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+				let settings = switch(await configuration_actor.get_tier_settings(tier)){
+					case (#ok(t)) {t;};
+					case (#err(t)) { return #err(t); };
+				};
+
 				let customer : Types.Customer = {
 					var name = name;
 					var description = description;			
 					identity = identity;
 					tier = tier;
+					var tier_settings = settings;
 					var applications = List.nil();
 					created = Time.now();
 				};
@@ -107,12 +116,18 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 			switch (customer_get(caller)) {
 				case (?customer) { return #err(#DuplicateRecord); };
 				case (null) {
+					let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
+					let settings = switch(await configuration_actor.get_tier_settings(TIER_ON_SIGNUP)){
+						case (#ok(t)) {t;};
+						case (#err(t)) { return #err(t); };
+					};					
 					// register customer with a Free tier
 					let customer : Types.Customer = {
 						var name = name;
 						var description = description;			
 						identity = caller;
-						tier = #Free;
+						tier = TIER_ON_SIGNUP;
+						var tier_settings = settings;
 						var applications = List.nil();
 						created = Time.now();
 					};
@@ -178,16 +193,19 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	private func _register_application (name : Text, description : Text, to : Principal, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		switch (customer_get(to))	{
 			case (?customer) {
+				if (List.size(customer.applications) >= customer.tier_settings.number_of_applications) return #err(#TierRestriction);
+
 				let cycles_assign = switch (cycles) {
 					case (?c) {c;};
-					case (null) {
+					case (null) { 
 						let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
-						await configuration_actor.get_app_init_cycles();
+						await configuration_actor.get_app_init_cycles(); 
 					};
 				};
 				Cycles.add(cycles_assign);
 				let application_actor = await Application.Application({
 					tier = customer.tier;
+					tier_settings = customer.tier_settings;
 					configuration_service = configuration_service;
 					operators = [to];
 					// owner of the application service is a controller for any "spawned" canisters!
