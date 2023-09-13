@@ -14,13 +14,14 @@ module {
 	};
 	
 	// state of the bucket or repository itself
-	public type PartitionStatus = {
+	public type BucketInfo = {
+		id : Principal;
 		cycles : Int;
 		memory_mb : Int;
 		heap_mb : Int;
 		chunks : Nat;
-		files : ?Nat;
-		directories : ?Nat;
+		files : Nat;
+		directories : Nat;
 		url : Text;
 	};
 
@@ -34,8 +35,7 @@ module {
 		var name : Text;
 		var description : Text;
 		identity : Principal;
-		tier : ServiceTier;
-		var tier_settings: TierSettings;
+		var tier : Tier;
 		// principal id
 		var applications : List.List<Text>;
 		created: Time.Time;
@@ -45,7 +45,7 @@ module {
 		name : Text;
 		description : Text;
 		identity : Principal;
-		tier : ServiceTier;
+		tier : Tier;
 		applications : [Text];
 		created: Time.Time;
 	};	
@@ -71,6 +71,7 @@ module {
 		var buckets : List.List<Text>;
 		var active_bucket : Text;
 		var scaling_strategy : ScalingStarategy;
+		var bucket_counter: Nat;
 		created : Time.Time;
 	};
 
@@ -82,6 +83,18 @@ module {
 		active_bucket : Text;
 		scaling_strategy : ScalingStarategy;
 		created : Time.Time;
+	};
+
+	public type RepositoryDetails = {
+		id : Text;
+		name : Text;
+		description : Text;
+		buckets : [BucketInfo];
+		total_files : Nat;
+		total_directories : Nat;		
+		active_bucket : Text;
+		scaling_strategy : ScalingStarategy;
+		created : Time.Time;
 	};	
 
 	/**
@@ -89,25 +102,30 @@ module {
 	* In the first version there is no difference. But limits will be applied based on the tier.
 	* (number of apps, number of repos, buckets etc)
 	*/
-	public type ServiceTier = {
+	public type TierId = {
 		#Free;
 		#Standard;
 		#Advanced;
 	};
 
-	public type TierSettingsArg = {
+	public type TierOptionsArg = {
 		number_of_applications : ?Nat;
 		number_of_repositories : ?Nat;
 		private_repository_forbidden : ?Bool;
 		nested_directory_forbidden : ?Bool;
 	};
 
-	public type TierSettings = {
+	public type TierOptions = {
 		number_of_applications : Nat;
 		number_of_repositories : Nat;
 		private_repository_forbidden : Bool;
 		nested_directory_forbidden : Bool;
 		created : Time.Time;
+	};
+
+	public type Tier = {
+		id : TierId;
+		options : TierOptions;
 	};
 
 	public type Network = {
@@ -122,8 +140,7 @@ module {
 
 	public type ScalingStarategy = {
 		#Disabled;
-		#Auto;
-		#Manual : MemoryThreshold;
+		#Auto : ?MemoryThreshold;
 	};
 
 	public type ViewMode = {
@@ -165,6 +182,7 @@ module {
 		#Delete;
 		#Rename;
 		#TTL;
+		#HttpHeaders;
 	};
 	// Type contains possible required data to make some action with an existing resource
 	public type ActionResourceArgs = {
@@ -173,6 +191,7 @@ module {
 		name : ?Text;
 		parent_path : ?Text;
 		ttl : ?Nat;
+		http_headers: ?[NameValue];
 	};	
 
 	public type Resource = {
@@ -193,6 +212,7 @@ module {
 	public type ResourceView = {
 		id : Text;
 		resource_type : ResourceType;
+		http_headers : [(Text, Text)];
 		content_size : Nat;
 		ttl : ?Nat;
 		created : Int;
@@ -227,9 +247,8 @@ module {
 
 	public type ApplicationArgs = {
 		network : Network;
-		// tier or the opportunitites
-		tier : ServiceTier;
-		tier_settings : TierSettings;
+		// tier of the opportunitites
+		tier : Tier;
 		// operators to work with a repo
 		operators : [Principal];
 		// if specified, then this list is included into controllers list for any "registered" canisters 
@@ -299,12 +318,16 @@ module {
         get_remainder_cycles : shared query () -> async Nat;
 		get_app_init_cycles : shared query () -> async Nat;
 		get_bucket_init_cycles : shared query () -> async Nat;
-		get_tier_settings : shared query (t:ServiceTier) -> async Result.Result<TierSettings, Errors>;
+		get_tier_options : shared query (t:TierId) -> async Result.Result<TierOptions, Errors>;
 	};
+
+	public type ApplicationActor = actor {
+		apply_tier : shared (tier : Tier) -> async ();
+	};	
 
     public type DataBucketActor = actor {
 		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
-        get_status : shared query () -> async PartitionStatus;
+        get_status : shared query () -> async BucketInfo;
 		clean_up : shared () -> async ();	
 		execute_action_on_resource : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;
 		store_resource : shared (content : Blob, resource_args : ResourceArgs ) -> async Result.Result<IdUrl, Errors>;

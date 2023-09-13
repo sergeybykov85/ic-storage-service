@@ -18,24 +18,22 @@ shared (installation) actor class ServiceConfig() = this {
     stable let OWNER = installation.caller;
 	// number of cycles to leave on the canister before taking (withdrawal) all cycles
 	stable var remainder_cycles: Nat = 10_000_000_000;
-
-	stable var app_init_cycles: Nat = 100_000_000_000;
-
+	// number of cycles to assign for a new app
+	stable var app_init_cycles: Nat = 120_000_000_000;
+	// number of cycles to assign for a new bucket
 	stable var bucket_init_cycles: Nat = 50_000_000_000;
 
-	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 20; memory_mb = 4_000_000};
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 20; memory_mb = 3000};
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
 
-	stable var tier_settings : Trie.Trie<Types.ServiceTier, Types.TierSettings> = Trie.empty();
-	stable var tier_settings_history : Trie.Trie<Types.ServiceTier, List.List<Types.TierSettings>> = Trie.empty();    
+	stable var tier_options : Trie.Trie<Types.TierId, Types.TierOptions> = Trie.empty();
+	stable var tier_options_history : Trie.Trie<Types.TierId, List.List<Types.TierOptions>> = Trie.empty();    
 
+    private func tier_equal(t1: Types.TierId, t2: Types.TierId): Bool  {t1 == t2;};
 
-    private func tier_equal(t1: Types.ServiceTier, t2: Types.ServiceTier): Bool  {t1 == t2;};
-
-
-    private func tier_hash(t : Types.ServiceTier) : Hash.Hash {
+    private func tier_hash(t : Types.TierId) : Hash.Hash {
         (switch (t) {
             case (#Free) {1;};
             case (#Standard) {2;};
@@ -43,13 +41,13 @@ shared (installation) actor class ServiceConfig() = this {
         });
     };
 
-    private func tier_key(id: Types.ServiceTier) : Trie.Key<Types.ServiceTier>  {
-         //let s = tier_str(id);
+    private func tier_key(id: Types.TierId) : Trie.Key<Types.TierId>  {
          { key = id; hash = tier_hash id };
     };
 
-    private func tier_settings_get(id : Types.ServiceTier) : ?Types.TierSettings = Trie.get(tier_settings, tier_key(id), tier_equal);
-    private func tier_settings_history_get(id : Types.ServiceTier) : ?List.List<Types.TierSettings> = Trie.get(tier_settings_history, tier_key(id), tier_equal);
+    private func tier_options_get(id : Types.TierId) : ?Types.TierOptions = Trie.get(tier_options, tier_key(id), tier_equal);
+    
+	private func tier_options_history_get(id : Types.TierId) : ?List.List<Types.TierOptions> = Trie.get(tier_options_history, tier_key(id), tier_equal);
 	
     private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
@@ -60,27 +58,27 @@ shared (installation) actor class ServiceConfig() = this {
 	* Allowed only to the owner user
 	*/
     public shared ({ caller }) func apply_operators(ids: [Principal]) {
-		//assert(caller == OWNER);
+		assert(caller == OWNER);
     	operators := ids;
     };
 
 	public shared ({ caller }) func apply_scaling_memory_options(v:Types.MemoryThreshold) {
-		//assert(caller == OWNER);
+		assert(caller == OWNER);
     	scaling_memory_options:=v;
     };
 
     public shared ({ caller }) func apply_remainder_cycles(v:Nat) {
-		//assert(caller == OWNER);
+		assert(caller == OWNER);
     	remainder_cycles:=v;
     };
 
     public shared ({ caller }) func apply_app_init_cycles(v:Nat) {
-		//assert(caller == OWNER);
+		assert(caller == OWNER);
     	app_init_cycles:=v;
     };
 
     public shared ({ caller }) func apply_bucket_init_cycles(v:Nat) {
-		//assert(caller == OWNER);
+		assert(caller == OWNER);
     	bucket_init_cycles:=v;
     };		
 
@@ -89,22 +87,22 @@ shared (installation) actor class ServiceConfig() = this {
 	};
 
 	/**
-	* Adds the new tier settings.
+	* Adds the new tier options.
 	* Allowed only to the owner user or operator.
 	*/
-    public shared ({ caller }) func apply_tier_settings(t:Types.ServiceTier, settings:Types.TierSettingsArg) {
+    public shared ({ caller }) func apply_tier_options(t:Types.TierId, settings:Types.TierOptionsArg) {
     	//assert(caller == OWNER or _is_operator(caller));
-        switch (tier_settings_get(t)) {
+        switch (tier_options_get(t)) {
             case (?ext) {
-                let hist = switch (tier_settings_history_get(t)) {
+                let hist = switch (tier_options_history_get(t)) {
                     case (?h) { h; };
                     case (null) {List.nil();}
                 };
-                tier_settings_history := Trie.put(tier_settings_history, tier_key(t), tier_equal, List.push(ext, hist)).0;
+                tier_options_history := Trie.put(tier_options_history, tier_key(t), tier_equal, List.push(ext, hist)).0;
             };
             case (null) { };
         };
-        tier_settings := Trie.put(tier_settings, tier_key(t),tier_equal, {
+        tier_options := Trie.put(tier_options, tier_key(t),tier_equal, {
             number_of_applications = Option.get(settings.number_of_applications, 1);
 		    number_of_repositories = Option.get(settings.number_of_repositories, 1);
 		    private_repository_forbidden = Option.get(settings.private_repository_forbidden, false);
@@ -112,16 +110,20 @@ shared (installation) actor class ServiceConfig() = this {
 		    created = Time.now();
         }).0;
     };
-
-	public shared ({ caller }) func get_tier_settings_history (t:Types.ServiceTier) : async [Types.TierSettings] {
-    	switch (tier_settings_history_get(t)) {
+	/**
+	* Returns past options for the tier (if any modifications in the options took place)
+	*/
+	public shared ({ caller }) func get_tier_options_history (t:Types.TierId) : async [Types.TierOptions] {
+    	switch (tier_options_history_get(t)) {
         	case (?h) { List.toArray(h); };
         	case (_) {[];};
       	};
   	};
-
-	public query func get_tier_settings(t:Types.ServiceTier) : async Result.Result<Types.TierSettings, Types.Errors> {
-		switch (tier_settings_get(t)){
+	/**
+	* Returns options for the tier
+	*/
+	public query func get_tier_options(t:Types.TierId) : async Result.Result<Types.TierOptions, Types.Errors> {
+		switch (tier_options_get(t)){
 			case (?s) {
 				return #ok(s);
 			};

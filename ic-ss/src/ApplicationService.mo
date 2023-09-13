@@ -22,7 +22,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	// owner has a super power, do anything inside this actor and assign any list of operators
     stable let OWNER = installation.caller;
 
-	let TIER_ON_SIGNUP : Types.ServiceTier = #Free;
+	let TIER_ON_SIGNUP : Types.TierId = #Free;
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators = initArgs.operators;
@@ -73,11 +73,26 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		return { owner = OWNER; operators = operators }
 	};
 
+	public shared ({caller}) func migrate_customer_tier (identity : Principal, tier : Types.Tier): async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (customer_get(identity)) {
+			case (?customer) {
+				customer.tier := tier;
+				for (a_id in List.toIter(customer.applications)) {
+					let app_actor : Types.ApplicationActor = actor (a_id);
+					await app_actor.apply_tier(tier);
+				};
+			};
+			case (null) { return #err(#NotFound);};
+		};
+		return #ok();
+	};
+
 	/**
 	* Registers a new customer.
 	* Allowed only to the owner or operator of the storage service.
 	*/
-	public shared ({ caller }) func register_customer (name : Text, description : Text, identity : Principal, tier : Types.ServiceTier) : async Result.Result<Text, Types.Errors> {
+	public shared ({ caller }) func register_customer (name : Text, description : Text, identity : Principal, tier_id : Types.TierId) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 
 		switch (customer_get(identity)) {
@@ -86,7 +101,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 			};
 			case (null) {
 				let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
-				let settings = switch(await configuration_actor.get_tier_settings(tier)){
+				let settings = switch(await configuration_actor.get_tier_options(tier_id)){
 					case (#ok(t)) {t;};
 					case (#err(t)) { return #err(t); };
 				};
@@ -95,8 +110,10 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					var name = name;
 					var description = description;			
 					identity = identity;
-					tier = tier;
-					var tier_settings = settings;
+					var tier = {
+						id = tier_id;
+						options = settings;
+					};
 					var applications = List.nil();
 					created = Time.now();
 				};
@@ -117,7 +134,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				case (?customer) { return #err(#DuplicateRecord); };
 				case (null) {
 					let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
-					let settings = switch(await configuration_actor.get_tier_settings(TIER_ON_SIGNUP)){
+					let settings = switch(await configuration_actor.get_tier_options(TIER_ON_SIGNUP)){
 						case (#ok(t)) {t;};
 						case (#err(t)) { return #err(t); };
 					};					
@@ -126,8 +143,10 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 						var name = name;
 						var description = description;			
 						identity = caller;
-						tier = TIER_ON_SIGNUP;
-						var tier_settings = settings;
+						var tier = {
+							id = TIER_ON_SIGNUP;
+							options = settings;
+						};
 						var applications = List.nil();
 						created = Time.now();
 					};
@@ -140,14 +159,6 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		}
 	};	
 
-	/**
-	* Registers a new application for already registered customer. Application is assigned to the specified customer.
-	* Allowed only to the owner or operator of the storage service.
-	*/
-	public shared ({ caller }) func register_application_for (name : Text, description : Text, customer : Principal) : async Result.Result<Text, Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		await _register_application(name, description, customer, null);
-	};
 
 	/**
 	* Registers a new application for already registered customer. Customer should call this method to register an app.
@@ -193,7 +204,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	private func _register_application (name : Text, description : Text, to : Principal, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
 		switch (customer_get(to))	{
 			case (?customer) {
-				if (List.size(customer.applications) >= customer.tier_settings.number_of_applications) return #err(#TierRestriction);
+				if (List.size(customer.applications) >= customer.tier.options.number_of_applications) return #err(#TierRestriction);
 
 				let cycles_assign = switch (cycles) {
 					case (?c) {c;};
@@ -205,7 +216,6 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				Cycles.add(cycles_assign);
 				let application_actor = await Application.Application({
 					tier = customer.tier;
-					tier_settings = customer.tier_settings;
 					configuration_service = configuration_service;
 					operators = [to];
 					// owner of the application service is a controller for any "spawned" canisters!
@@ -296,7 +306,8 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
   	};
 
     private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
-    private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
+    
+	private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))

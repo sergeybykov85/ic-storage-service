@@ -152,6 +152,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	private func _clean_up_ttl() : () {
+		Debug.print("_clean_up_ttl");
 		let now = Time.now();
 		let fResources = Map.mapFilter<Text, Types.Resource, Types.Resource>(resources, Text.equal, Text.hash,
 			func(key : Text, r : Types.Resource) : ?Types.Resource {
@@ -166,6 +167,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	private func _clean_up_expired () : async () {
+		Debug.print("_clean_up_expired");
 		_clean_up_chunks();
 		_clean_up_ttl();
 	};
@@ -330,6 +332,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (#Delete) {_delete_resource (args.id)};
 			case (#Rename) {_rename_resource(args); };
 			case (#TTL) { _ttl_resource(args); };
+			case (#HttpHeaders) {_apply_headers(args.id, Option.get(args.http_headers, []))};
 		}
 	};
 
@@ -420,8 +423,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};		
 		switch (r.resource_type) {
 		case (#Directory) {
+			var resource_html = "";
 			let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
-			return "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
+			resource_html :=resource_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+			if (Option.isSome(r.ttl)) {
+				resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
+			};
+			return resource_html # "</div>";
 		};
 		case (#File) {
 			var resource_html = "";
@@ -432,6 +440,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 					let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					if (Option.isSome(r.ttl)) {
+						resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
+					};
 					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:25px;\" href=\"" # url_raw #"\" target = \"_blank\"> raw link</a>";
 					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
@@ -440,6 +451,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				case (null) {
 					let url = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					if (Option.isSome(r.ttl)) {
+						resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
+					};	
 					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
 					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
 
@@ -556,15 +570,12 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	/**
 	* Applies http headers for the specified resource (override)
-	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func apply_headers(resource_id : Text, http_headers: [Types.NameValue]) : async Result.Result<(), Types.Errors> {
-		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-
+	private func _apply_headers(resource_id : Text, http_headers: [Types.NameValue]) :  Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(resource_id)) {
 			case (?resource) {
 				resource.http_headers:= Array.map<Types.NameValue, (Text, Text)>(http_headers, func h = (h.name, h.value) );
-				return #ok();
+				#ok(build_id_url(resource_id, Principal.toText(Principal.fromActor(this))));
 			};
 			case (_) {
 				return #err(#NotFound);
@@ -572,11 +583,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};	
 
-	public query func get_all_resources() : async [Types.ResourceView] {
-		let canister_id =  Principal.toText(Principal.fromActor(this));
-		return Iter.toArray(Iter.map (resources.entries(), 
-			func (i: (Text, Types.Resource)): Types.ResourceView {Utils.resource_view(i.0, i.1, canister_id, NETWORK)}));
-	};
 
 	/**
 	* Returns information about the resource by id. The resource type is not important here, any kind of the resource is returned.
@@ -789,18 +795,16 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				if (Option.isSome(res.parent) or Option.isSome(args.parent_path)) {
 					// passed directory path
 					//var directory_id:Text = null;
-					let directory_id = switch(res.parent) {
-						case (?p) { p;};
-						case (null) {
-							let path = Utils.unwrap(args.parent_path);
-							if (path == ROOT) {
-								ROOT;
-							}else {
-								let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
+					let directory_id = switch(args.parent_path) {
+						case (?p) { 
+							if (p == ROOT) { ROOT }
+							else {
+								let path_tokens : [Text] = Iter.toArray(Text.tokens(p, #char '/'));
 								Utils.hash(canister_id, path_tokens);
-							};
+							}
 						};
-					};
+						case (null) {Option.get(res.parent, ROOT);};
+					};					
 
 					if (directory_id == ROOT) {
 						parent_id :=null;
@@ -872,15 +876,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Returns information about memory usage and number of created files and folders.
 	* This method could be extended.
 	*/
-	public query func get_status() : async Types.PartitionStatus {
+	public query func get_status() : async Types.BucketInfo {
+		let id = Principal.fromActor(this);
 		return {
+			id = id;
 			cycles = Utils.get_cycles_balance();
 			memory_mb = Utils.get_memory_in_mb();
 			heap_mb = Utils.get_heap_in_mb();
 			chunks = chunk_state.size();
-			files = ? total_files;
-			directories = ?total_directories;
-			url = Utils.build_resource_url({resource_id = ""; canister_id = Principal.toText(Principal.fromActor(this)); network = NETWORK; view_mode = #Index});
+			files =  total_files;
+			directories = total_directories;
+			url = Utils.build_resource_url({resource_id = ""; canister_id = Principal.toText(id); network = NETWORK; view_mode = #Index});
 		
 		};
 	};
@@ -908,18 +914,21 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};		
 
 	system func preupgrade() {
+		Debug.print("preupgrade");
 		resource_state := Iter.toArray(resources.entries());
 		chunk_state := Iter.toArray(chunks.entries());
 		Timer.cancelTimer(timer_cleanup);
 	};
 
 	system func postupgrade() {
+		Debug.print("postupgrade");
 		resources := Map.fromIter<Text, Types.Resource>(resource_state.vals(), resource_state.size(), Text.equal, Text.hash);
 		chunks := Map.fromIter<Text, Types.ResourceChunk>(chunk_state.vals(), chunk_state.size(), Text.equal, Text.hash);
 		resource_state:=[];
 		chunk_state:=[];
 		// execute scanner each 2 minutes
 		timer_cleanup:= Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired);
+		Debug.print("Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired)");
 
 	};
 

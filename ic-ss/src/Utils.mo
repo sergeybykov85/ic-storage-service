@@ -55,16 +55,10 @@ module {
     public func get_resource_id(url : Text) : ?([Text], Types.ViewMode) {
 
         if (Text.startsWith(url, #text RESOURCE_ROUTE) ) {
-            let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
-            let last_token : Text = url_split[url_split.size() - 1];
-            let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
-            return ?([filter_query_params[0]], #Open);            
+            return ?([_fetch_id_from_uri(url)], #Open);            
         };
         if (Text.startsWith(url, #text DOWNLOAD_ROUTE)) {
-            let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
-            let last_token : Text = url_split[url_split.size() - 1];
-            let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
-            return ?([filter_query_params[0]], #Download);            
+            return ?([_fetch_id_from_uri(url)], #Download);            
         };        
         if (Text.startsWith(url, #text INDEX_ROUTE)) {
             let tokens_iter = Text.tokens(unwrap(Text.stripStart(url, #text INDEX_ROUTE)) , #char '/');
@@ -75,6 +69,12 @@ module {
         return null;
     };
 
+    private func _fetch_id_from_uri (url: Text): Text {
+        let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
+        let last_token : Text = url_split[url_split.size() - 1];
+        let filter_query_params : [Text] = Iter.toArray(Text.tokens(last_token, #char '?'));
+        return filter_query_params[0];
+    };    
 
     private func un_escape_browser_token (token : Text) : Text {
         Text.replace(Text.replace(token, #text "%20", " "), #text "%2B", "+")
@@ -173,6 +173,7 @@ module {
         return {
             id = id;
             resource_type = info.resource_type;
+            http_headers = info.http_headers;
             content_size = info.content_size;
             created = info.created;
             name = info.name;
