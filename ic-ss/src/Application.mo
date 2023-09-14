@@ -119,7 +119,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_repository (repository_id : Text) : async Result.Result<Text, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				for (bucket_id in List.toIter(repo.buckets)){
@@ -150,7 +150,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func clean_up_repository (repository_id : Text, bucket_id : ?Text) : async Result.Result<Text, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let to_process = switch (bucket_id) {
@@ -171,12 +171,11 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	/**
-	* Applies a scaling strategy on the repository and triger "scaling attempt"
+	* Applies a scaling strategy on the repository and triger "scaling attempt" (if needed)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func apply_scaling_strategy_on_repository (repository_id : Text, value : Types.ScalingStarategy) : async Result.Result<Text, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
-		Debug.print("apply_scaling_strategy_on_repository "#debug_show(value));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				repo.scaling_strategy:=value;
@@ -191,11 +190,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
 
 	private func _execute_scaling_attempt (repository : Types.Repository) : async Bool {
-		Debug.print("check scaling strategy "#repository.active_bucket);
 		let scaling_needed = switch (repository.scaling_strategy) {
 			case (#Disabled) {false;};
 			case (#Auto memoryThreshold) {
-				Debug.print("  check scaling strategy Auto");
 				let bucket_actor : Types.DataBucketActor = actor (repository.active_bucket);
 				let bucket_status = await bucket_actor.get_status();
 				if (bucket_status.chunks == 0) {
@@ -213,19 +210,15 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		};
 
 		if (scaling_needed) {
-			Debug.print("   scaling needed, scaling for the buclet "#repository.active_bucket);
 			let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
 			let cycles_assign = await configuration_actor.get_bucket_init_cycles();
-			Debug.print("   scaling needed, cycles_assign "#debug_show(cycles_assign));
 			let bucket_counter = repository.bucket_counter + 1;
 			let bucket_name = debug_show({
 				application = Principal.fromActor(this);
 				repository_name = repository.name;
 				bucket = "bucket_"#Nat.toText(bucket_counter);
 			});
-			Debug.print("   try to create a new bucket "#bucket_name);
 			let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
-			Debug.print("   new  bucket "#bucket);
 			repository.buckets := List.push(bucket, repository.buckets);
 			repository.bucket_counter :=bucket_counter;
 			// set the new bucker as an active one
@@ -241,7 +234,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func delete_bucket (repository_id : Text, bucket_id: Text) : async Result.Result<Text, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				if (repo.active_bucket == bucket_id) return #err(#OperationNotAllowed);
@@ -273,7 +266,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func new_bucket (repository_id : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let cycles_assign = switch (cycles) {
@@ -332,7 +325,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func new_directory(repository_id : Text, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				// control of nested directories
@@ -429,7 +422,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Allowed only to the owner or operator of the app.
 	*/
 	public shared ({ caller }) func execute_action_on_resource(repository_id : Text, target_bucket:?Text, args:Types.ActionResourceArgs) : async Result.Result<(Types.IdUrl), Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (Option.get(target_bucket, repo.active_bucket));

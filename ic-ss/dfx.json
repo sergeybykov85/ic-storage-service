@@ -4,7 +4,12 @@
       "main": "src/ApplicationService.mo",
       "type": "motoko",
       "dependencies": []
-    }
+    },
+    "service_config": {
+      "main": "src/ServiceConfig.mo",
+      "type": "motoko",
+      "dependencies": []
+    }          
   },
   "defaults": {
     "build": {

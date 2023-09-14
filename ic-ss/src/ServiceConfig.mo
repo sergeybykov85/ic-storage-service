@@ -91,7 +91,7 @@ shared (installation) actor class ServiceConfig() = this {
 	* Allowed only to the owner user or operator.
 	*/
     public shared ({ caller }) func apply_tier_options(t:Types.TierId, settings:Types.TierOptionsArg) {
-    	//assert(caller == OWNER or _is_operator(caller));
+    	assert(caller == OWNER or _is_operator(caller));
         switch (tier_options_get(t)) {
             case (?ext) {
                 let hist = switch (tier_options_history_get(t)) {

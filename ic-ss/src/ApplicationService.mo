@@ -73,6 +73,10 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		return { owner = OWNER; operators = operators }
 	};
 
+	/**
+	* Applies a new tier options for the existing customer and all its created applications.
+	* Allowed only to the owner user or operator.
+	*/
 	public shared ({caller}) func migrate_customer_tier (identity : Principal, tier : Types.Tier): async Result.Result<(), Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (customer_get(identity)) {
@@ -274,9 +278,18 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	/**
 	* Returns customer apps for the specified customer.
 	*/	
-	public shared query func get_application_records_for(customer : Principal) : async [Types.CustomerAppView] {
+	public shared ({ caller }) func get_application_records_for(customer : Principal) : async [Types.CustomerAppView] {
+		assert(caller == OWNER or _is_operator(caller));
 		_get_application_records_for(customer);
   	};
+
+	/**
+	* Returns customers for the specified tier
+	*/	
+	public shared ({ caller }) func get_customers_for_tier(tier_id : Types.TierId) : async [Types.CustomerView] {
+		assert(caller == OWNER or _is_operator(caller));
+		_get_customers_for_tier(tier_id);
+  	};	
 
 	/**
 	* Returns customer apps for the current user.
@@ -305,6 +318,16 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
       	};
   	};
 
+	private func _get_customers_for_tier(tier_id : Types.TierId) : [Types.CustomerView] {
+		let res = Buffer.Buffer<Types.CustomerView>(Trie.size(customers));
+		for ((p, c) in Trie.iter(customers)){
+			if (c.tier.id == tier_id) {
+				res.add(Utils.customer_view(c));
+			}
+		};
+		return Buffer.toArray(res);
+  	};	
+
     private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
     
 	private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
@@ -316,7 +339,8 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	/**
 	* Returns all registered customer apps.
 	*/	
-	public shared query func get_application_records() : async [Types.CustomerAppView] {
+	public shared ({ caller }) func get_application_records() : async [Types.CustomerAppView] {
+		assert(caller == OWNER or _is_operator(caller));
 		return Iter.toArray(Iter.map (Trie.iter(applications), 
 			func (i: (Principal, Types.CustomerApp)): Types.CustomerAppView {Utils.customerApp_view(i.0, i.1)}));
 	};
@@ -324,7 +348,8 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	/**
 	* Returns all registered customers.
 	*/
-	public query func get_customer_records() : async [Types.CustomerView] {
+	public shared ({ caller }) func get_customer_records() : async [Types.CustomerView] {
+		assert(caller == OWNER or _is_operator(caller));
 		return Iter.toArray(Iter.map (Trie.iter(customers), 
 			func (i: (Principal, Types.Customer)): Types.CustomerView {Utils.customer_view(i.1)}));
 	};

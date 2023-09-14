@@ -25,7 +25,7 @@ import Utils "./Utils";
 shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this {
 
     let OWNER = installation.caller;
-	
+	// expiration period for chunk = 10 mins (in nanosec)
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
 	let CLEAN_UP_PERIOD_SEC = 300;
 	let ROOT = "/";
@@ -122,7 +122,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				// update global var
 				if (removed_directories > 0) { total_directories := total_directories - removed_directories; };
 				if (removed_files > 0) { total_files := total_files - removed_files; };
-				return #ok({id = resource_id; url = ""});	
+				return #ok({id = resource_id; url = ""; partition = "" });	
 			};
 			case (_) {
 				return #err(#NotFound);
@@ -152,7 +152,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	private func _clean_up_ttl() : () {
-		Debug.print("_clean_up_ttl");
 		let now = Time.now();
 		let fResources = Map.mapFilter<Text, Types.Resource, Types.Resource>(resources, Text.equal, Text.hash,
 			func(key : Text, r : Types.Resource) : ?Types.Resource {
@@ -167,7 +166,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	private func _clean_up_expired () : async () {
-		Debug.print("_clean_up_expired");
 		_clean_up_chunks();
 		_clean_up_ttl();
 	};
@@ -337,7 +335,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	public shared query ({ caller }) func http_request(request : Http.Request) : async Http.Response {
-		Debug.print (" = http_request "#request.url # "; caller "#debug_show(caller));
 		// check download suffix
 		switch (Utils.get_resource_id(request.url)) {
 			case (?r) {
@@ -469,12 +466,19 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (#Index) {
 				let canister_id = Principal.toText(Principal.fromActor(this));
 				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128193; / </h2><hr/>";
-
+				var files = "";
+				var dirs = "";
 				for ((id, r) in resources.entries()) {
 					if (Option.isNull(r.parent)) {
-						directory_html := directory_html # render_resource(canister_id, id, r, null);
+						switch (r.resource_type) {
+							case (#Directory){	dirs := dirs # render_resource(canister_id, id, r, null); };
+							case (#File) { files := files # render_resource(canister_id, id, r, null); 	};
+						} 
 					};
+		
 				};
+				directory_html:=directory_html # dirs;
+				directory_html:=directory_html # files;
 				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</body></html>"));
 			};
 			case (_) {Http.not_found()};
@@ -765,13 +769,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				network = NETWORK;
 				view_mode = #Open;
 			});
+			partition = canister_id
 		};
 	};
 
 	private func _ttl_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
 			case (?res) { 
-				Debug.print("TTL for resource "#args.id # " name "#res.name # "; ttl "#debug_show(args.ttl));
 				res.ttl := args.ttl; };
 			case (_) {
 				return #err(#NotFound);
@@ -880,6 +884,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		let id = Principal.fromActor(this);
 		return {
 			id = id;
+			name = NAME;
 			cycles = Utils.get_cycles_balance();
 			memory_mb = Utils.get_memory_in_mb();
 			heap_mb = Utils.get_heap_in_mb();
@@ -889,10 +894,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			url = Utils.build_resource_url({resource_id = ""; canister_id = Principal.toText(id); network = NETWORK; view_mode = #Index});
 		
 		};
-	};
-
-	public query func get_name() : async Text {
-		return NAME;
 	};
 
 	private func _is_operator(id: Principal) : Bool {
@@ -914,21 +915,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};		
 
 	system func preupgrade() {
-		Debug.print("preupgrade");
 		resource_state := Iter.toArray(resources.entries());
 		chunk_state := Iter.toArray(chunks.entries());
 		Timer.cancelTimer(timer_cleanup);
 	};
 
 	system func postupgrade() {
-		Debug.print("postupgrade");
 		resources := Map.fromIter<Text, Types.Resource>(resource_state.vals(), resource_state.size(), Text.equal, Text.hash);
 		chunks := Map.fromIter<Text, Types.ResourceChunk>(chunk_state.vals(), chunk_state.size(), Text.equal, Text.hash);
 		resource_state:=[];
 		chunk_state:=[];
-		// execute scanner each 2 minutes
 		timer_cleanup:= Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired);
-		Debug.print("Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired)");
 
 	};
 

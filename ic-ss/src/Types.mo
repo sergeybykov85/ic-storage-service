@@ -16,6 +16,7 @@ module {
 	// state of the bucket or repository itself
 	public type BucketInfo = {
 		id : Principal;
+		name : Text;
 		cycles : Int;
 		memory_mb : Int;
 		heap_mb : Int;
@@ -223,6 +224,8 @@ module {
 	public type IdUrl = {
 		id : Text;
 		url : Text;
+		// usually it is a bucket
+		partition : Text;
 	};
 
 	public type DirectoryView = {
