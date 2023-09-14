@@ -22,8 +22,8 @@ shared (installation) actor class ServiceConfig() = this {
 	stable var app_init_cycles: Nat = 120_000_000_000;
 	// number of cycles to assign for a new bucket
 	stable var bucket_init_cycles: Nat = 50_000_000_000;
-
-	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 20; memory_mb = 3000};
+	// just default memory settings. It is used to make a decisipn of round of scalling is needed (strategy #auto)
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 1500; memory_mb = 3000};
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
