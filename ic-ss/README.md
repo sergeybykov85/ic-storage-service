@@ -56,7 +56,7 @@ _Only main canister ApplicationService is deployed from dfx command line. Applic
 
 ***
 ## Attention:
-_Directory `screens` contains some illustration from the local replica. All articles, images, videos were used for internal need to demonstrate the possible ways how data could be organized. The screens refers to the icons for TTL, icon of the direcory and icon of the file. It is not the images. They are just html codes that are used by backend canister to give more pretty view. One more canister was introduced `SericeConfig` to store limits, some parameters, tier data, etc. This canister is not a part of the initial design, but it is good to have it_
+_Directory `screens` contains some illustration from the local replica. All articles, images, videos were used for the demo needs to illustrate the possible ways on how data could be organized. The screens refers to the icons for TTL, icon of the direcory and icon of the file. It is not the images. They are just html codes that are used by backend canister to give more pretty view. One more canister was introduced `SericeConfig` to store limits, some parameters, tier data, etc. This canister is not a part of the initial design, but it is good to have it here as well. Solution introduces concept of directories and files. Directory is a way to organize the files, it is an optional feature. Important remark is that files under the root may have the same names, duplicates are ok. But the file names under the directory should be uniq in names inside that directory._
 
 # DONE:
 ## Milestone 2 
