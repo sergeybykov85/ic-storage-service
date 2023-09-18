@@ -64,20 +64,54 @@ module {
 		description : Text;
 		owner : Principal;
 		created : Time.Time;
+	};
+
+	public type AccessType = {
+		// anyone can read
+		#Public;
+		// read operation is restricted
+		#Private;
+	};
+
+	public type AccessKeyArgs = {
+		id : Text;
+		name : Text;
+		entropy : Text;
+		valid_to : ?Time.Time;
+	};
+
+	public type AccessKey = {
+		id : Text;
+		// logical name
+		name : Text;
+		// never shared
+		token : ?Text;
+		created : Time.Time;
+		valid_to : ?Time.Time;
+	};
+
+	public type AccessToken = {
+		token : Text;
+		created: Time.Time;
+		valid_to : ?Time.Time;
 	};	
 
 	public type Repository = {
+		access_type : AccessType;
 		var name : Text;
 		var description : Text;
 		var buckets : List.List<Text>;
 		var active_bucket : Text;
 		var scaling_strategy : ScalingStarategy;
 		var bucket_counter: Nat;
+		// it is actual for private repo for now
+		var access_keys : List.List<AccessKey>;
 		created : Time.Time;
 	};
 
 	public type RepositoryView = {
 		id : Text;
+		access_type : AccessType;
 		name : Text;
 		description : Text;
 		buckets : [Text];
@@ -88,6 +122,7 @@ module {
 
 	public type RepositoryDetails = {
 		id : Text;
+		access_type : AccessType;
 		name : Text;
 		description : Text;
 		buckets : [BucketInfo];
@@ -96,6 +131,17 @@ module {
 		active_bucket : Text;
 		scaling_strategy : ScalingStarategy;
 		created : Time.Time;
+	};
+
+
+	public type RepositoryArgs = {
+		name : Text;
+		description : Text;
+		access_type : AccessType;
+		// cycles for a new bucket
+		cycles : ?Nat;
+		// default stratey is "disabled"
+		scaling_strategy : ?ScalingStarategy;
 	};	
 
 	/**
@@ -167,6 +213,7 @@ module {
 		// opportunity to link chunks by a logical name
 		binding_key : ?Text;
 	};
+
 	// Type object to create a new resource
 	public type ResourceArgs = {
 		content_type : ?Text;
@@ -264,6 +311,9 @@ module {
 		name : Text;
 		network : Network;
 		operators : [Principal];
+		// propagated from repo
+		access_type : AccessType;
+		access_token : ?[AccessToken];
 	};
 
 	public type CommitArgs = {
@@ -329,6 +379,8 @@ module {
 	};	
 
     public type DataBucketActor = actor {
+		register_access_token : shared(args : AccessToken) -> async Result.Result<(), Errors>;
+		remove_access_token : shared(token : Text) -> async Result.Result<(), Errors>;
 		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
         get_status : shared query () -> async BucketInfo;
 		clean_up : shared () -> async ();	

@@ -6,6 +6,7 @@ import List "mo:base/List";
 import Iter "mo:base/Iter";
 import Map "mo:base/HashMap";
 import Nat "mo:base/Nat";
+import Int "mo:base/Int";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Time "mo:base/Time";
@@ -29,6 +30,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	stable var configuration_service =  initArgs.configuration_service;
 
 	let management_actor : Types.ICManagementActor = actor "aaaaa-aa";
+
+	// increment counter, internal needs
+	stable var _internal_increment : Nat = 0;	
 
     private func repository_get(id : Text) : ?Types.Repository = Trie.get(repositories, Utils.text_key(id), Text.equal);	
 
@@ -75,13 +79,13 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Registers a new repository. 
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func register_repository (name : Text, description : Text, cycles : ?Nat) : async Result.Result<Text, Types.Errors> {
+	public shared ({ caller }) func register_repository (args : Types.RepositoryArgs) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		// control number of repositories
 		if (Trie.size(repositories) >= tier.options.number_of_repositories) return #err(#TierRestriction);
 
 		let next_id = Trie.size(repositories) + 1;
-		let cycles_assign = switch (cycles) {
+		let cycles_assign = switch (args.cycles) {
 			case (?c) {c;};
 			case (null) {
 				let configuration_actor : Types.ConfigurationServiceActor = actor (configuration_service);
@@ -92,24 +96,29 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		// first vision how to create "advanced bucket name" to have some extra information
 		let bucket_name = debug_show({
 			application = Principal.fromActor(this);
-			repository_name = name;
+			repository_name = args.name;
 			bucket = "bucket_"#Nat.toText(bucket_counter);
 		});
-		// create a new bucket
-		let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
+		let repo : Types.Repository = {
+			var name = args.name;
+			var description = args.description;
+			access_type = args.access_type;
+			var active_bucket = "";
+			var buckets = List.nil();
+			var scaling_strategy = Option.get(args.scaling_strategy, #Disabled);
+			created = Time.now();
+			var access_keys = List.nil();
+			var bucket_counter = bucket_counter;
+		};
 
+		// create a new bucket
+		let bucket = await _register_bucket(repo, [Principal.fromActor(this)], bucket_name, cycles_assign);
+		repo.active_bucket:=bucket;
+		repo.buckets:=List.push(bucket, repo.buckets);
+	
 		// generate repository id
 		let hex = Utils.hash_time_based(Principal.toText(Principal.fromActor(this)), next_id);
 
-		let repo : Types.Repository = {
-			var name = name;
-			var description = description;
-			var active_bucket = bucket;
-			var buckets = List.push(bucket, null);
-			var scaling_strategy = #Disabled;
-			created = Time.now();
-			var bucket_counter = bucket_counter;
-		};
 		repositories := Trie.put(repositories, Utils.text_key(hex), Text.equal, repo).0;
 		return #ok(hex);
 	};
@@ -218,7 +227,20 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				repository_name = repository.name;
 				bucket = "bucket_"#Nat.toText(bucket_counter);
 			});
-			let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
+
+			var access_tokens_opt:?[Types.AccessToken] = null;
+			if (List.size(repository.access_keys) > 0) {
+				let tokens = List.map(repository.access_keys, func (ac : Types.AccessKey):Types.AccessToken {
+					{
+						token = Utils.unwrap(ac.token);
+						created = ac.created;
+						valid_to = ac.valid_to;
+					}
+				});
+				access_tokens_opt:=?List.toArray(tokens);
+			};
+
+			let bucket = await _register_bucket(repository, [Principal.fromActor(this)], bucket_name, cycles_assign);
 			repository.buckets := List.push(bucket, repository.buckets);
 			repository.bucket_counter :=bucket_counter;
 			// set the new bucker as an active one
@@ -283,7 +305,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 					repository_name = repo.name;
 					bucket = "bucket_"#Nat.toText(bucket_counter);
 				});
-				let bucket = await _register_bucket([Principal.fromActor(this)], bucket_name, cycles_assign);
+				let bucket = await _register_bucket(repo, [Principal.fromActor(this)], bucket_name, cycles_assign);
 				repo.buckets := List.push(bucket, repo.buckets);
 				repo.bucket_counter := bucket_counter;
 				// set the new bucker as an active one
@@ -453,9 +475,97 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
 	public query func get_tier() : async Types.Tier {
 		return tier;
-	};	
+	};
 
-	public func repository_details(id:Text) : async Result.Result<Types.RepositoryDetails, Types.Errors> {
+	/**
+	* Registers a new access key on the specified repository.
+	* Returns `id, and secret key`. Namelly the secret key gives the access to repo. There is no other way to get secet key
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func register_access_key(repository_id : Text, args : Types.AccessKeyArgs) : async Result.Result<(Text, Text), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)){
+			case (?repo) {
+				if (repo.access_type == #Public) return #err(#OperationNotAllowed);
+
+
+				_internal_increment := _internal_increment + 1;
+				let canister_id =  Principal.toText(Principal.fromActor(this));
+				let now = Time.now();
+				let key_id = Utils.hash_time_based(canister_id # "access_key", _internal_increment);
+				// lets have a long secret
+				let secret_token:Text = Utils.hash(canister_id, [Int.toText(now), args.entropy]) # Utils.hash(repository_id, [Int.toText(now), args.entropy]);
+				let ak:Types.AccessKey =  {
+					id = key_id;
+					name = args.name;
+					token = ? secret_token;
+					created = now;
+					valid_to = args.valid_to;
+				};
+
+				repo.access_keys:= List.push(ak, repo.access_keys);
+
+				for (bucket_id in List.toIter(repo.buckets)){
+					let bucket = Principal.fromText(bucket_id);
+					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					ignore await bucket_actor.register_access_token({
+						token = secret_token;
+						created = now;
+						valid_to = args.valid_to;
+					});
+				};
+
+				return #ok(key_id, secret_token);
+			};
+			case (null) {
+				return #err(#NotFound);	
+			};
+		}
+	};
+
+	/**
+	* Deletes an access key from the repo
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func delete_access_key(repository_id : Text, args : Types.AccessKeyArgs) : async Result.Result<Text, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(repository_id)){
+			case (?repo) {
+				if (repo.access_type == #Public) return #err(#OperationNotAllowed);
+				let after_remove = List.filter(repo.access_keys, func (k:Types.AccessKey):Bool {k.id == args.id} );
+				if (List.size(after_remove) == List.size(repo.access_keys)) return #err(#NotFound);
+				repo.access_keys:=after_remove;
+				return #ok(args.id);
+			};
+			case (null) {
+				return #err(#NotFound);	
+			};
+		}		
+	};	
+	/**
+	* Returns list of access keys for the repo. Secret key is not returned
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func repository_access_keys(id:Text) : async Result.Result<[Types.AccessKey], Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		switch (repository_get(id)){
+			case (?repo) {
+				let _protected = List.map<Types.AccessKey,Types.AccessKey>(repo.access_keys, func (k:Types.AccessKey):Types.AccessKey {
+					let r : Types.AccessKey = {
+						k with token = null;
+					};
+					r;
+				});
+				return #ok(List.toArray(_protected));
+			};
+			case (null) {
+				return #err(#NotFound);	
+			};
+		}		
+	};			
+
+	public shared ({ caller }) func repository_details(id:Text) : async Result.Result<Types.RepositoryDetails, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (repository_get(id)){
 			case (?repo) {
 				var infos = Buffer.Buffer<Types.BucketInfo>(List.size(repo.buckets));
@@ -472,6 +582,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				return #ok(	{
 						id = id;
 						name = repo.name;
+						access_type = repo.access_type;
 						description = repo.description;
 						buckets = Buffer.toArray(infos);
 						total_files = total_files;
@@ -495,13 +606,27 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	/**
 	* Deploys new bucket canister and returns its id
 	*/
-	private func _register_bucket(operators : [Principal], name:Text, cycles : Nat): async Text {
+	private func _register_bucket(repository:Types.Repository, operators : [Principal], name:Text, cycles : Nat): async Text {
+		var access_tokens_opt:?[Types.AccessToken] = null;
+		if (List.size(repository.access_keys) > 0) {
+			let tokens = List.map(repository.access_keys, func (ac : Types.AccessKey):Types.AccessToken {
+				{
+					token = Utils.unwrap(ac.token);
+					created = ac.created;
+					valid_to = ac.valid_to;
+				}
+			});
+			access_tokens_opt:=?List.toArray(tokens);
+		};
+		
 		Cycles.add(cycles);
 		let bucket_actor = await DataBucket.DataBucket({
 			// apply the user account as operator of the bucket
 			name = name;
 			operators = operators;
 			network = initArgs.network;
+			access_type = repository.access_type;
+			access_token = access_tokens_opt;
 		});
 
 		let bucket_principal = Principal.fromActor(bucket_actor);

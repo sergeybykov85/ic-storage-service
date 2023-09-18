@@ -156,6 +156,7 @@ module {
     public func repository_view(id:Text, info: Types.Repository) : Types.RepositoryView {
         return {
             id = id;
+            access_type = info.access_type;
             name = info.name;
             description = info.description;
             buckets = List.toArray(info.buckets);

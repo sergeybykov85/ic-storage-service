@@ -31,16 +31,27 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	let ROOT = "/";
 	let DEF_CSS =  "<style> a { text-decoration: underscore; color:#090909; } body { background-color: #E9FCDF; color:#090909; font-family: helvetica; } </style>";
 
+	stable let ACCESS_TYPE = initArgs.access_type;
 	stable let NAME = initArgs.name;
 	stable let NETWORK = initArgs.network;
 	stable var operators = initArgs.operators;
+
+	private func init_access_tokens (access_token : ?[Types.AccessToken]) : Trie.Trie<Text, Types.AccessToken> {
+		var r:Trie.Trie<Text, Types.AccessToken> = Trie.empty();
+		if (Option.isSome(access_token)){
+			for (at in Utils.unwrap(access_token).vals()) {
+				r := Trie.put(r, Utils.text_key(at.token), Text.equal, at).0;
+			}
+		};
+		return r;
+	};	
 	//  -------------- stable variables ----------------
 	stable var resource_state : [(Text, Types.Resource)] = [];
 	stable var chunk_state : [(Text, Types.ResourceChunk)] = [];
 	stable var chunk_binding_state : [(Text, Types.ChunkBinding)] = [];
 
-	// file content is stored in the stable memory 
 	stable var resource_data : Trie.Trie<Text, [Blob]> = Trie.empty();
+	stable var access_token : Trie.Trie<Text, Types.AccessToken> = init_access_tokens(initArgs.access_token);
 	
 	// number of all res
 	stable var total_files : Nat = 0;
@@ -62,6 +73,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Returns binary data of the resource  (from stable memory)
 	*/
     private func resource_data_get(id : Text) : ?[Blob] = Trie.get(resource_data, Utils.text_key(id), Text.equal);
+	private func access_token_get(id : Text) : ?Types.AccessToken = Trie.get(access_token, Utils.text_key(id), Text.equal);
 
 	/**
 	* Deletes resource by its id (either directory or file).
@@ -321,7 +333,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 	/**
 	* Executes an action on the resource : copy, delete or rename.
-	* Rename covers a simple rename itself or move to the other location
+	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func execute_action_on_resource(args : Types.ActionResourceArgs) : async Result.Result<(Types.IdUrl), Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
@@ -333,6 +345,26 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (#HttpHeaders) {_apply_headers(args.id, Option.get(args.http_headers, []))};
 		}
 	};
+
+	/**
+	* Registers a new access token. If token already here, no errors.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func register_access_token(args : Types.AccessToken) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		access_token := Trie.put(access_token, Utils.text_key(args.token), Text.equal, args).0;
+		return #ok();
+	};
+
+	/**
+	* Removes access token. If token is not there, no errors.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func remove_access_token(token : Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		access_token := Trie.remove(access_token, Utils.text_key(token), Text.equal).0;
+		return #ok();
+	};		
 
 	public shared query ({ caller }) func http_request(request : Http.Request) : async Http.Response {
 		// check download suffix
