@@ -28,8 +28,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	// expiration period for chunk = 10 mins (in nanosec)
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
 	let CLEAN_UP_PERIOD_SEC = 300;
-	let ROOT = "/";
-	let DEF_CSS =  "<style> a { text-decoration: underscore; color:#090909; } body { background-color: #E9FCDF; color:#090909; font-family: helvetica; } </style>";
+	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # "</style>";
 
 	stable let ACCESS_TYPE = initArgs.access_type;
 	stable let NAME = initArgs.name;
@@ -177,9 +176,23 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
+	private func _clean_up_access(): () {
+		let now = Time.now();
+		// remove expired access keys 
+		for ((key, a) in Trie.iter(access_token))	{
+			if (Option.isSome(a.valid_to)) {
+				if (now > Utils.unwrap(a.valid_to)) {
+					access_token := Trie.remove(access_token, Utils.text_key(key), Text.equal).0;
+					Debug.print("Removed access token "#key);
+				}
+			}
+		};
+	};
+
 	private func _clean_up_expired () : async () {
 		_clean_up_chunks();
 		_clean_up_ttl();
+		_clean_up_access();
 	};
 	
 	stable var timer_cleanup = Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired);	
@@ -195,6 +208,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	public shared query func access_list() : async (Types.AccessList) {
 		return { owner = OWNER; operators = operators };
 	};
+
+	public query func get_tokens() : async [Types.AccessToken] {
+		return Iter.toArray(Iter.map (Trie.iter(access_token), 
+			func (i: (Text, Types.AccessToken)): Types.AccessToken {i.1}));
+	};	
 
 	/**
 	* Stores a resource (till 2 mb)
@@ -370,33 +388,49 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		// check download suffix
 		switch (Utils.get_resource_id(request.url)) {
 			case (?r) {
-				let path_size = Array.size(r.0);
-				let resouce_id = switch (r.1) {
+				let path_size = Array.size(r.path);
+				// check access
+				if (ACCESS_TYPE == #Private) {
+					switch (r.token) {
+						case (?t) {
+							switch (access_token_get(t)) {
+								case (null) {return Http.forbidden()};
+								case (?access) {
+									if (Option.isSome(access.valid_to)) {
+										if (Time.now() > Utils.unwrap(access.valid_to)) return Http.forbidden();
+									}
+									};
+							};
+						};
+						case (null) {return Http.un_authorized();};
+					};
+				};
+				let resouce_id = switch (r.view_mode) {
 					case (#Index) {
 						let canister_id = Principal.toText(Principal.fromActor(this));
 						if (path_size == 0) {
-							ROOT;
+							Utils.ROOT;
 						}
 						else if (path_size == 1) {
-							Utils.hash(canister_id, r.0);
+							Utils.hash(canister_id, r.path);
 						} else {
-							let by_names = Utils.hash(canister_id, r.0);
+							let by_names = Utils.hash(canister_id, r.path);
         					switch (resources.get(by_names)) {
 								case (?d) {by_names;};
 								// path till the last element, final id is a name
 								case (null) { 
-									let k1 = Utils.hash(canister_id, Array.subArray<Text>(r.0, 0, path_size - 1));
-									Utils.hash(canister_id, [k1, r.0[path_size-1]]);
+									let k1 = Utils.hash(canister_id, Array.subArray<Text>(r.path, 0, path_size - 1));
+									Utils.hash(canister_id, [k1, r.path[path_size-1]]);
 								};
 							};
 						};
 					};
 					case (_) { 
 						if (path_size == 0) return Http.not_found();
-						r.0[0]; 
+						r.path[0]; 
 					};
 				};
-				return resource_http_handler(resouce_id, r.1, http_request_streaming_callback);
+				return resource_http_handler(resouce_id, r.view_mode, r.token, http_request_streaming_callback);
 			};
 			case null { return Http.not_found();};
 
@@ -432,7 +466,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		return path;
 	};
 
-	private func clickable_path (path:Text, canister_id:Text) : Text {
+	private func clickable_path (path:Text, canister_id:Text, token:?Text) : Text {
 		var html:Text = "";
 		let root_url = Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 		var full_path:Text = "";
@@ -440,12 +474,12 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			if (full_path == "") { full_path:=p; }
 			else { full_path:=full_path#"/"#p; };
 			let url = Utils.build_resource_url({resource_id = full_path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
-			html := html # "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # url # "\" >"#p#"</a> /</div>";
+			html := html # "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # Utils.appendTokenParam(url, token) # "\" >"#p#"</a> /</div>";
 		};
-		return "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # root_url # "\" >"#ROOT#"</a></div>"# html;
+		return "<div style=\"display: inline; margin:10px;\">&#128193;<a style=\"font-weight:bold;\" href=\"" # Utils.appendTokenParam(root_url, token) # "\" >"#Utils.ROOT#"</a></div>"# html;
 	};
 
-	private func render_resource (canister_id: Text, id:Text, r:Types.Resource, directory_path:?Text) : Text {
+	private func render_resource (canister_id: Text, id:Text, r:Types.Resource, directory_path:?Text, token : ?Text) : Text {
 		let path = switch (directory_path) {
 			case (?p) {p # "/" # r.name;}; 
 			case (null) {r.name;};
@@ -454,10 +488,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		case (#Directory) {
 			var resource_html = "";
 			let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
-			resource_html :=resource_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+			resource_html :=resource_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
 			if (Option.isSome(r.ttl)) {
-				resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
+				resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 			};
+			resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
 			return resource_html # "</div>";
 		};
 		case (#File) {
@@ -468,24 +503,24 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					// under the directory
 					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 					let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
-					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
 					if (Option.isSome(r.ttl)) {
-						resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
+						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 					};
-					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
-					resource_html := resource_html # "<a style=\"float:right; padding-right:25px;\" href=\"" # url_raw #"\" target = \"_blank\"> raw link</a>";
-					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
-	
+					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_raw, token) #"\" target = \"_blank\"> raw link</a>";
+					return  resource_html # "<span style=\"float:right; padding-right:20px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
 				};
 				case (null) {
 					let url = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
-					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a>";
+					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
 					if (Option.isSome(r.ttl)) {
-						resource_html := resource_html # "<span style=\"padding-left:30px;\">&#9202;</span>";
-					};	
-					resource_html := resource_html # "<a style=\"float:right; padding-right:15px;\" href=\"" # url_download #"\" target = \"_blank\">download</a>";
-					return  resource_html # "<span style=\"float:right; padding-right:15px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
-
+						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
+					};
+					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
+					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
+					return  resource_html # "<span style=\"float:right; padding-right:20px;\">"#  Float.format(#fix 3,Float.fromInt(r.content_size)/1024) #" Kb</span></div>";
 				};
 
 			};
@@ -493,7 +528,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
-    private func root_view (view_mode : Types.ViewMode) : Http.Response {
+    private func root_view (view_mode : Types.ViewMode, token:?Text) : Http.Response {
 		switch (view_mode) {
 			case (#Index) {
 				let canister_id = Principal.toText(Principal.fromActor(this));
@@ -503,23 +538,23 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				for ((id, r) in resources.entries()) {
 					if (Option.isNull(r.parent)) {
 						switch (r.resource_type) {
-							case (#Directory){	dirs := dirs # render_resource(canister_id, id, r, null); };
-							case (#File) { files := files # render_resource(canister_id, id, r, null); 	};
+							case (#Directory){	dirs := dirs # render_resource(canister_id, id, r, null, token); };
+							case (#File) { files := files # render_resource(canister_id, id, r, null, token); };
 						} 
 					};
 		
 				};
 				directory_html:=directory_html # dirs;
 				directory_html:=directory_html # files;
-				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</body></html>"));
+				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # Utils.FORMAT_DATES_SCRIPT # "</body></html>"));
 			};
 			case (_) {Http.not_found()};
 		};
 	};	
 
-    private func resource_http_handler(key : Text, view_mode : Types.ViewMode, callback : Http.StreamingCallback) : Http.Response {
-		if (key == ROOT) {
-			return root_view (view_mode);
+    private func resource_http_handler(key : Text, view_mode : Types.ViewMode, token:?Text, callback : Http.StreamingCallback) : Http.Response {
+		if (key == Utils.ROOT) {
+			return root_view (view_mode, token);
 		};
 
 		switch (resources.get(key)) {
@@ -528,7 +563,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				if (v.resource_type == #Directory) {
 					let canister_id = Principal.toText(Principal.fromActor(this));
 					let directory_path = full_path(v);
-					var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>"# clickable_path(directory_path, canister_id)#"</h2><hr/>";
+					var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>"# clickable_path(directory_path, canister_id, token)#"</h2><hr/>";
 					var files = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
 					var dirs = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
 					for (leaf in List.toIter(v.leafs)) {
@@ -542,13 +577,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					};
 					// render dirs
 					Buffer.iterate<(Text, Types.Resource)>(dirs, func (id, r) {
-						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path);
+						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path, token);
 					});					
 					// render files
 					Buffer.iterate<(Text, Types.Resource)>(files, func (id, r) {
-						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path);
+						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path, token);
 					});
-					return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</body></html>"));
+					return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # Utils.FORMAT_DATES_SCRIPT # "</body></html>"));
 				};
 
 				let headers = switch (view_mode) {
@@ -833,16 +868,16 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					//var directory_id:Text = null;
 					let directory_id = switch(args.parent_path) {
 						case (?p) { 
-							if (p == ROOT) { ROOT }
+							if (p == Utils.ROOT) { Utils.ROOT }
 							else {
 								let path_tokens : [Text] = Iter.toArray(Text.tokens(p, #char '/'));
 								Utils.hash(canister_id, path_tokens);
 							}
 						};
-						case (null) {Option.get(res.parent, ROOT);};
+						case (null) {Option.get(res.parent, Utils.ROOT);};
 					};					
 
-					if (directory_id == ROOT) {
+					if (directory_id == Utils.ROOT) {
 						parent_id :=null;
 					} else {
 						// reject if directory is not exists

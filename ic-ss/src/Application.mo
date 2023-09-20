@@ -16,12 +16,20 @@ import Text "mo:base/Text";
 import Option "mo:base/Option";
 
 import DataBucket "DataBucket";
+import Http "./Http";
 import Types "./Types";
 import Utils "./Utils";
 
 shared  (installation) actor class Application(initArgs : Types.ApplicationArgs) = this {
 
     let OWNER = installation.caller;
+
+//	let ROOT = "/";
+	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE #
+	".grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } "#
+	".cell { min-height: 100px; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: relative; } "#
+	".access_tag { color:white; font-size:large; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: absolute; right: 20px; top: 1px; background-color:#636466;} </style>";
+//	let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
 
  	stable var operators = initArgs.operators;
 	stable var tier  = initArgs.tier;
@@ -81,10 +89,17 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	*/
 	public shared ({ caller }) func register_repository (args : Types.RepositoryArgs) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (Utils.invalid_name(args.name)) return #err(#InvalidRequest);
 		// control number of repositories
 		if (Trie.size(repositories) >= tier.options.number_of_repositories) return #err(#TierRestriction);
+		let canister_id = Principal.toText(Principal.fromActor(this));	
+		let repository_id = Utils.hash(canister_id, [args.name]);
+		// repo name is uniq across application
+		switch (repository_get(repository_id)) {
+			case (?repo) {return #err(#DuplicateRecord);};
+			case (null) {};
+		};
 
-		let next_id = Trie.size(repositories) + 1;
 		let cycles_assign = switch (args.cycles) {
 			case (?c) {c;};
 			case (null) {
@@ -116,11 +131,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		repo.active_bucket:=bucket;
 		repo.buckets:=List.push(bucket, repo.buckets);
 	
-		// generate repository id
-		let hex = Utils.hash_time_based(Principal.toText(Principal.fromActor(this)), next_id);
 
-		repositories := Trie.put(repositories, Utils.text_key(hex), Text.equal, repo).0;
-		return #ok(hex);
+		repositories := Trie.put(repositories, Utils.text_key(repository_id), Text.equal, repo).0;
+		return #ok(repository_id);
 	};
 
 	/**
@@ -494,7 +507,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				let now = Time.now();
 				let key_id = Utils.hash_time_based(canister_id # "access_key", _internal_increment);
 				// lets have a long secret
-				let secret_token:Text = Utils.hash(canister_id, [Int.toText(now), args.entropy]) # Utils.hash(repository_id, [Int.toText(now), args.entropy]);
+				let secret_token:Text = Utils.hash(canister_id, [Int.toText(now), args.entropy]) # 
+				Utils.subText(Utils.hash(repository_id, [Int.toText(now), args.entropy]), 0, 20);
 				let ak:Types.AccessKey =  {
 					id = key_id;
 					name = args.name;
@@ -532,7 +546,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)){
 			case (?repo) {
 				if (repo.access_type == #Public) return #err(#OperationNotAllowed);
-				let after_remove = List.filter(repo.access_keys, func (k:Types.AccessKey):Bool {k.id == args.id} );
+				let after_remove = List.filter(repo.access_keys, func (k:Types.AccessKey):Bool {k.id != args.id} );
 				if (List.size(after_remove) == List.size(repo.access_keys)) return #err(#NotFound);
 				repo.access_keys:=after_remove;
 				return #ok(args.id);
@@ -597,11 +611,83 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				return #err(#NotFound);	
 			};
 		}
-	};	
+	};
+
+
+	public shared query ({ caller }) func http_request(request : Http.Request) : async Http.Response {
+		switch (Utils.get_resource_id(request.url)) {
+			case (?r) {
+				let path_size = Array.size(r.path);
+				let repository_id = switch (r.view_mode) {
+					case (#Index) {
+						let canister_id = Principal.toText(Principal.fromActor(this));
+						if (path_size == 0) {
+							Utils.ROOT;
+						} else 	Utils.hash(canister_id, r.path);
+					};
+					case (_) { 
+						if (path_size == 0) return Http.not_found();
+						r.path[0]; 
+					};
+				};
+				return repository_http_handler(repository_id, r.view_mode);
+			};
+			case null { return Http.not_found();};
+		};
+	};		
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
     };
+
+    private func repository_http_handler(key : Text, view_mode : Types.ViewMode) : Http.Response {
+		if (key == Utils.ROOT) {
+			return root_view (view_mode);
+		};
+
+		switch (repository_get(key)) {
+            case (null) { Http.not_found() };
+            case (? v)  {
+				let canister_id = Principal.toText(Principal.fromActor(this));
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128464; "#v.name#" </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
+				
+				directory_html:=directory_html # render_repository(canister_id, key, v);
+				// extra details possible here
+				return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
+			};
+        };
+    };
+
+    private func root_view (view_mode : Types.ViewMode) : Http.Response {
+		switch (view_mode) {
+			case (#Index) {
+				let canister_id = Principal.toText(Principal.fromActor(this));
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128464; Overview &#9757; </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
+				for ((id, r) in Trie.iter(repositories)) {
+					directory_html:=directory_html # render_repository(canister_id, id, r);
+				};
+				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
+			};
+			case (_) {Http.not_found()};
+		};
+	};
+
+	private func render_repository (canister_id: Text, id:Text, r:Types.Repository) : Text {
+		let path = r.name;
+		let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+		var resource_html = "<div class=\"cell\">";
+		resource_html :=resource_html # "<div>&#128464; <a style=\"font-weight:bold; color:#0969DA;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
+		resource_html := resource_html # "<p><i>"# r.description # "</i></p>";
+		resource_html := resource_html # "<p><u>Total buckets</u> : "# Nat.toText(List.size(r.buckets)) ;
+		if (r.access_type == #Public and r.active_bucket != "") {
+			let bucket_url = Utils.build_resource_url({resource_id = ""; canister_id = r.active_bucket; network = initArgs.network; view_mode = #Index});
+			resource_html := resource_html # "<a style=\"float:right; padding-right:10px;\" href=\"" # bucket_url #"\" target = \"_blank\">&#128194; Open</a>";
+		};
+		resource_html := resource_html # "</p>";
+		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span></p>";
+		resource_html := resource_html # "<p class=\"access_tag\">"# debug_show(r.access_type) # "</p>";
+		return  resource_html # "</div>";	
+	};	
 
 	/**
 	* Deploys new bucket canister and returns its id

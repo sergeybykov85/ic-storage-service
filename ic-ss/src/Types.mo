@@ -42,6 +42,13 @@ module {
 		created: Time.Time;
 	};
 
+	public type RequestedObject = {
+		// path or id
+		path : [Text];
+		view_mode : ViewMode;
+		token : ?Text;
+	};
+
 	public type CustomerView = {
 		name : Text;
 		description : Text;

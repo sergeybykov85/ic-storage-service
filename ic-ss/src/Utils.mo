@@ -24,6 +24,10 @@ import SHA256 "./Sha256";
 
 module {
 
+    public let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
+    public let ROOT = "/";
+    public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #E9FCDF; color:#090909; font-family: helvetica; }";
+
     let HEX_SYMBOLS =  [
     '0', '1', '2', '3', '4', '5', '6', '7',
     '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -32,7 +36,9 @@ module {
     let NOT_ALLOWED_FOR_NAME = ['\u{22}','/',',','#', '@', '?', '+',';',':','$','=','[',']','~','^','|','<','>','{','}'];
     // 1MB
     let MB_IN_BYTES:Int = 1_048_576;
-   
+    
+    let PARAM_TOKEN = "token";
+    
     let INDEX_ROUTE = "/i/";
     // it is a http route to open/read any type of resource by its ID
     let RESOURCE_ROUTE = "/r/";
@@ -52,22 +58,43 @@ module {
 
     public func text_key(id: Text) : Trie.Key<Text> = { key = id; hash = Text.hash id };
 
-    public func get_resource_id(url : Text) : ?([Text], Types.ViewMode) {
+    public func get_resource_id(url : Text) : ?Types.RequestedObject {
 
         if (Text.startsWith(url, #text RESOURCE_ROUTE) ) {
-            return ?([_fetch_id_from_uri(url)], #Open);            
+            return ?{
+                path = [_fetch_id_from_uri(url)];
+                view_mode = #Open;
+                token = _fetch_param_from_uri(url, PARAM_TOKEN);
+            };
         };
         if (Text.startsWith(url, #text DOWNLOAD_ROUTE)) {
-            return ?([_fetch_id_from_uri(url)], #Download);            
+            return ?{
+                path = [_fetch_id_from_uri(url)];
+                view_mode = #Download;
+                token = _fetch_param_from_uri(url, PARAM_TOKEN);
+            };            
         };        
         if (Text.startsWith(url, #text INDEX_ROUTE)) {
-            let tokens_iter = Text.tokens(unwrap(Text.stripStart(url, #text INDEX_ROUTE)) , #char '/');
-            let tokens = Array.map<Text, Text>(Iter.toArray(tokens_iter), func (x: Text): Text = un_escape_browser_token(x)  );
-            return ?(tokens, #Index);      
+            let path = unwrap(Text.stripStart(url, #text INDEX_ROUTE));
+            if (path == "" or Text.startsWith(path, #char '?')) {
+                return ?{
+                    path = [];
+                    view_mode = #Index;
+                    token = _fetch_param_from_uri(url, PARAM_TOKEN);
+                };  
+            };
+            let no_slash_no_query : [Text] = Iter.toArray(Text.tokens(path, #char '?'));
+            let tokens = Array.map<Text, Text>(Iter.toArray(Text.tokens(no_slash_no_query[0] , #char '/')), func (x: Text): Text = un_escape_browser_token(x)  );
+            return ?{
+                path = tokens;
+                view_mode = #Index;
+                token = _fetch_param_from_uri(url, PARAM_TOKEN);
+            };                
         };
 
         return null;
     };
+    
 
     private func _fetch_id_from_uri (url: Text): Text {
         let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
@@ -79,6 +106,22 @@ module {
     private func un_escape_browser_token (token : Text) : Text {
         Text.replace(Text.replace(token, #text "%20", " "), #text "%2B", "+")
     };
+
+
+    private func _fetch_param_from_uri (url : Text, param : Text) : ?Text {
+        let filter_query_params : [Text] = Iter.toArray(Text.tokens(url, #char '?'));
+        if (Array.size(filter_query_params) == 2) {
+            var t : ?Text = null;
+            Iter.iterate<Text>(Text.split(filter_query_params[1], #text("&")), 
+                func(x, _i) {
+                    let param_entry = Iter.toArray(Text.split(x, #text("=")));
+                    if (Array.size(param_entry) == 2) {
+                        if (param_entry[0] == param) t:=?param_entry[1];
+                    }
+                });
+            return t;
+        } else return null;
+    };    
 
     private func contains_invalid_symbol (id:Char) : Bool  {
         Option.isSome(Array.find(NOT_ALLOWED_FOR_NAME, func (x: Char) : Bool { x == id } ));
@@ -131,6 +174,34 @@ module {
     public func get_cycles_balance() : Int {
         return Cycles.balance();
     };
+
+    public func appendTokenParam (url : Text, token : ?Text) : Text {
+        if (Option.isNull(token)) return url;
+        if (Text.contains(url, #char '?')) {
+            return url # "&" # PARAM_TOKEN # "=" # unwrap(token);
+        };
+        return url # "?" # PARAM_TOKEN # "=" # unwrap(token);
+    };
+
+    public func subText(value : Text, indexStart: Nat, indexEnd : Nat) : Text {
+        if (indexStart == 0 and indexEnd >= value.size()) {  return value; };
+        if (indexStart >= value.size()) {
+            return "";
+        };
+
+        var result : Text = "";
+        var i : Nat = 0;
+        label l for (c in value.chars()) {
+            if (i >= indexStart and i < indexEnd) {
+                result := result # Char.toText(c);
+            };
+            if (i == indexEnd) {
+                break l;
+            };
+            i += 1;
+        };
+        result;
+    };    
 
     public func join<T>(a: [T], b:[T]) : [T] {
 		// Array.append is deprecated and it gives a warning
