@@ -221,7 +221,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				let application_actor = await Application.Application({
 					tier = customer.tier;
 					configuration_service = configuration_service;
-					operators = [to];
+					operators = [Principal.fromActor(this), to];
 					// owner of the application service is a controller for any "spawned" canisters!
 					spawned_canister_controllers = initArgs.spawned_canister_controllers;
 					network = initArgs.network;

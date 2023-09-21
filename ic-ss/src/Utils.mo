@@ -33,6 +33,8 @@ module {
     '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
     ];
 
+    let NOT_ALLOWED_FOR_DIRECTORY = ['\u{22}',',','#', '@', '?', '+',';',':','$','=','[',']','~','^','|','<','>','{','}'];
+
     let NOT_ALLOWED_FOR_NAME = ['\u{22}','/',',','#', '@', '?', '+',';',':','$','=','[',']','~','^','|','<','>','{','}'];
     // 1MB
     let MB_IN_BYTES:Int = 1_048_576;
@@ -128,8 +130,12 @@ module {
     };
 
     public func invalid_name (name : Text) : Bool {
-        Text.contains(name, #predicate (func(c) {contains_invalid_symbol(c)})  );
-    };    
+        Text.contains(name, #predicate (func(c) { Option.isSome(Array.find(NOT_ALLOWED_FOR_NAME, func (x: Char) : Bool { x == c } ))  })  );
+    };
+
+    public func invalid_directory_name (name : Text) : Bool {
+        Text.contains(name, #predicate (func(c) { Option.isSome(Array.find(NOT_ALLOWED_FOR_DIRECTORY, func (x: Char) : Bool { x == c } ))  })  );
+    };       
 
     /**
     * Builds resource url based on specified params (id, network, view mode)

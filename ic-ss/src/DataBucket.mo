@@ -292,19 +292,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			Cycles.add(cycles_to_send);
             await wallet.wallet_receive();
 		}
-	};	
-	/**
-	* Creates an empty directory (resource with type Directory).
-	* If parent_path is specified, then directory is created under the mentioned location if it is exist.
-	* If parent location is mentioned but it is not exist, then error is returned.
-	* If ttl is specified, then the directory will be removed once this time is reached.
-	* Folders are used to organize resources, for convenience, or to deploy logically groupped files
-	* Allowed only to the owner or operator of the bucket.
-	*/
-	public shared ({ caller }) func new_directory(args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
-		//if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		if (Utils.invalid_name(args.name)) return #err(#InvalidRequest);
+	};
+
+	private func _new_directory (args : Types.ResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		let canister_id = Principal.toText(Principal.fromActor(this));	
+		let name_tokens : [Text] = Iter.toArray(Text.tokens(args.name, #char '/'));
+		let name_to_apply = name_tokens[0];
+		var final_path:Text = name_to_apply;
 		var parent_directory_id:?Text = null;
 		var parent_opt : ?Types.Resource = null;
 		// only parent path is supported
@@ -314,17 +308,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
 				let parent_id:Text = Utils.hash(canister_id, path_tokens);
 				parent_directory_id:= ?parent_id;
+				final_path := path # "/" # name_to_apply;
 				// check if parent already exists.
 				switch (resources.get(parent_id)) {
 					case (?p) { 
 						parent_opt:=?p;
-						Utils.hash(canister_id, Utils.join(path_tokens, [args.name]));	
+						Utils.hash(canister_id, Utils.join(path_tokens,[name_to_apply]));	
 					};
 					// parent directory is not exists, error
 					case (null) {return #err(#NotFound);}
 				};
 			};
-			case (null) { Utils.hash(canister_id, [args.name]);}
+			case (null) { Utils.hash(canister_id, [name_to_apply]);}
 		};
 		switch (resources.get(directory_id)) {
 			case (?f) { return #err(#DuplicateRecord); };
@@ -335,7 +330,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					var ttl = args.ttl;
 					content_size = 0;
 					created = Time.now();
-					var name = args.name;
+					var name = name_to_apply;
 					var parent = parent_directory_id;
 					var leafs = List.nil();
 					did = null;
@@ -345,10 +340,36 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					case (null) {};
 				};
 				total_directories  := total_directories + 1;
+
+				if  (Array.size(name_tokens) > 1) {
+    				let next_iteration = Array.subArray<Text>(name_tokens, 1, Array.size(name_tokens) -1);
+					let r = _new_directory ({
+						content_type = args.content_type;
+						name = Text.join("/", next_iteration.vals());
+						parent_path = ?final_path;
+						parent_id = null;
+						ttl = args.ttl;
+					});
+					return r;
+				};
 				return #ok(build_id_url(directory_id, canister_id));
 			};
-		};			
+		};	
+
 	};
+	/**
+	* Creates an empty directory (resource with type Directory).
+	* If parent_path is specified, then directory is created under the mentioned location if it is exist.
+	* If parent location is mentioned but it is not exist, then error is returned.
+	* If ttl is specified, then the directory will be removed once this time is reached.
+	* Folders are used to organize resources, for convenience, or to deploy logically groupped files
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func new_directory(args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		if (Utils.invalid_directory_name(args.name)) return #err(#InvalidRequest);
+		_new_directory (args);			
+	};	
 	/**
 	* Executes an action on the resource : copy, delete or rename.
 	* Allowed only to the owner or operator of the bucket.

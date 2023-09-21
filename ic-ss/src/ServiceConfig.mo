@@ -23,7 +23,7 @@ shared (installation) actor class ServiceConfig() = this {
 	// number of cycles to assign for a new bucket
 	stable var bucket_init_cycles: Nat = 50_000_000_000;
 
-	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 20; memory_mb = 3000};
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 1000; memory_mb = 3000};
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
