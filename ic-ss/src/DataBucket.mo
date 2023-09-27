@@ -5,7 +5,6 @@ import Iter "mo:base/Iter";
 import List "mo:base/List";
 import Buffer "mo:base/Buffer";
 import Map "mo:base/HashMap";
-import Debug "mo:base/Debug";
 
 import Int "mo:base/Int";
 import Nat "mo:base/Nat";
@@ -27,13 +26,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
     let OWNER = installation.caller;
 	// expiration period for chunk = 10 mins (in nanosec)
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
-	let CLEAN_UP_PERIOD_SEC = 300;
+	// def scan period is 60sec
+	let CLEAN_UP_PERIOD_SEC = 600;
 	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # "</style>";
 
 	stable let ACCESS_TYPE = initArgs.access_type;
 	stable let NAME = initArgs.name;
 	stable let NETWORK = initArgs.network;
 	stable var operators = initArgs.operators;
+	// applicable for http_request for html content only
+	stable var html_resource_template = Option.make(Utils.DEF_TEMPLATE);
+	stable var cleanup_period_sec = CLEAN_UP_PERIOD_SEC;
 
 	private func init_access_tokens (access_token : ?[Types.AccessToken]) : Trie.Trie<Text, Types.AccessToken> {
 		var r:Trie.Trie<Text, Types.AccessToken> = Trie.empty();
@@ -183,7 +186,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			if (Option.isSome(a.valid_to)) {
 				if (now > Utils.unwrap(a.valid_to)) {
 					access_token := Trie.remove(access_token, Utils.text_key(key), Text.equal).0;
-					Debug.print("Removed access token "#key);
 				}
 			}
 		};
@@ -195,7 +197,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		_clean_up_access();
 	};
 	
-	stable var timer_cleanup = Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired);	
+	stable var timer_cleanup = Timer.recurringTimer(#seconds(cleanup_period_sec), _clean_up_expired);	
 
 	/**
 	* Applies list of operators for the storage service
@@ -322,7 +324,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (null) { Utils.hash(canister_id, [name_to_apply]);}
 		};
 		switch (resources.get(directory_id)) {
-			case (?f) { return #err(#DuplicateRecord); };
+			case (?f) { 
+				return #err(#DuplicateRecord);
+			};
+				
 			case (null) {
 				resources.put(directory_id, {
 					resource_type = #Directory;
@@ -352,11 +357,33 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					});
 					return r;
 				};
-				return #ok(build_id_url(directory_id, canister_id));
+				return #ok(build_id_path_url(directory_id, final_path, canister_id));
 			};
 		};	
 
 	};
+
+	/**
+	* Applies default template to render resource details for html entity requested though the http_request method
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func apply_html_resource_template(template : ?Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		html_resource_template:=template;
+		return #ok();
+	};
+
+	/**
+	* Applies default template to render resource details for html entity requested though the http_request method
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func apply_cleanup_period(seconds : Nat) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		cleanup_period_sec:=seconds;
+		Timer.cancelTimer (timer_cleanup);
+		timer_cleanup:= Timer.recurringTimer(#seconds(cleanup_period_sec), _clean_up_expired);
+		return #ok();
+	};		
 	/**
 	* Creates an empty directory (resource with type Directory).
 	* If parent_path is specified, then directory is created under the mentioned location if it is exist.
@@ -420,7 +447,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 									if (Option.isSome(access.valid_to)) {
 										if (Time.now() > Utils.unwrap(access.valid_to)) return Http.forbidden();
 									}
-									};
+								};
 							};
 						};
 						case (null) {return Http.un_authorized();};
@@ -620,6 +647,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
                 if (payload.size() > 1) {
                     return Http.handleLargeContent(did, headers, payload, callback);
                 };
+				// wrap html content with template
+				if (Option.isSome(html_resource_template) and Text.endsWith(v.name, Utils.HTML_RESOURCE_PATTERN)) {
+					switch (Text.decodeUtf8(payload[0])) {
+						case (?d) {
+							let t = Utils.unwrap(html_resource_template);
+							let wrapped = Text.replace(t, #text "${VALUE}", d);
+							return Http.success(headers, Text.encodeUtf8(wrapped));
+						};
+						case (null) { return Http.success(headers, payload[0]);};
+					};
+				};
                 return Http.success(headers, payload[0]);
             };
         };
@@ -861,6 +899,19 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
+	private func build_id_path_url (resource_id:Text, path:Text, canister_id:Text) : Types.IdUrl {
+		return {
+			id = resource_id;
+			url = Utils.build_resource_url({
+				resource_id = path;
+				canister_id = canister_id;
+				network = NETWORK;
+				view_mode = #Index;
+			});
+			partition = canister_id
+		};
+	};	
+
 	private func _ttl_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
 			case (?res) { 
@@ -964,6 +1015,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		_store_resource (Buffer.toArray(content), resource_args, null);
 	};
 
+	public query func get_html_resource_template() : async ?Text {
+		return html_resource_template;
+	};
+
+	public query func get_cleanup_period_sec() : async Nat {
+		return cleanup_period_sec;
+	};	
+
 	/**
 	* Returns information about memory usage and number of created files and folders.
 	* This method could be extended.
@@ -1013,7 +1072,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		chunks := Map.fromIter<Text, Types.ResourceChunk>(chunk_state.vals(), chunk_state.size(), Text.equal, Text.hash);
 		resource_state:=[];
 		chunk_state:=[];
-		timer_cleanup:= Timer.recurringTimer(#seconds(CLEAN_UP_PERIOD_SEC), _clean_up_expired);
+		timer_cleanup:= Timer.recurringTimer(#seconds(cleanup_period_sec), _clean_up_expired);
 
 	};
 

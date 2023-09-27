@@ -26,8 +26,9 @@ module {
 
     public let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
     public let ROOT = "/";
-    public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #E9FCDF; color:#090909; font-family: helvetica; }";
-
+    public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #FFFDE7; color:#090909; font-family: helvetica; }";
+	public let DEF_TEMPLATE = "<div style=\"background-color: #FFFDE7; display:flex;\"><div style=\"max-width:750px; margin: 0 auto; padding:10;\">${VALUE}</div></div>";
+    public let HTML_RESOURCE_PATTERN : Text.Pattern = #text ".html";
     let HEX_SYMBOLS =  [
     '0', '1', '2', '3', '4', '5', '6', '7',
     '8', '9', 'a', 'b', 'c', 'd', 'e', 'f',
@@ -96,7 +97,6 @@ module {
 
         return null;
     };
-    
 
     private func _fetch_id_from_uri (url: Text): Text {
         let url_split : [Text] = Iter.toArray(Text.tokens(url, #char '/'));
@@ -108,7 +108,6 @@ module {
     private func un_escape_browser_token (token : Text) : Text {
         Text.replace(Text.replace(token, #text "%20", " "), #text "%2B", "+")
     };
-
 
     private func _fetch_param_from_uri (url : Text, param : Text) : ?Text {
         let filter_query_params : [Text] = Iter.toArray(Text.tokens(url, #char '?'));
@@ -236,6 +235,7 @@ module {
             access_type = info.access_type;
             name = info.name;
             description = info.description;
+            tags = List.toArray(info.tags);
             buckets = List.toArray(info.buckets);
             active_bucket = info.active_bucket;
             scaling_strategy = info.scaling_strategy;

@@ -105,8 +105,9 @@ module {
 
 	public type Repository = {
 		access_type : AccessType;
-		var name : Text;
+		name : Text;
 		var description : Text;
+		var tags : List.List<Text>;
 		var buckets : List.List<Text>;
 		var active_bucket : Text;
 		var scaling_strategy : ScalingStarategy;
@@ -114,6 +115,7 @@ module {
 		// it is actual for private repo for now
 		var access_keys : List.List<AccessKey>;
 		created : Time.Time;
+		var last_update : ?Time.Time;
 	};
 
 	public type RepositoryView = {
@@ -121,6 +123,7 @@ module {
 		access_type : AccessType;
 		name : Text;
 		description : Text;
+		tags : [Text];
 		buckets : [Text];
 		active_bucket : Text;
 		scaling_strategy : ScalingStarategy;
@@ -132,6 +135,7 @@ module {
 		access_type : AccessType;
 		name : Text;
 		description : Text;
+		tags : [Text];
 		buckets : [BucketInfo];
 		total_files : Nat;
 		total_directories : Nat;		
@@ -149,6 +153,13 @@ module {
 		cycles : ?Nat;
 		// default stratey is "disabled"
 		scaling_strategy : ?ScalingStarategy;
+		tags : [Text];
+	};
+
+	public type RepositoryUpdateArgs = {
+		description : ?Text;
+		scaling_strategy : ?ScalingStarategy;
+		tags : ?[Text];
 	};	
 
 	/**
@@ -389,6 +400,8 @@ module {
 		register_access_token : shared(args : AccessToken) -> async Result.Result<(), Errors>;
 		remove_access_token : shared(token : Text) -> async Result.Result<(), Errors>;
 		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
+		apply_html_resource_template : shared (template : ?Text) -> async Result.Result<(), Errors>;
+		apply_cleanup_period : shared (seconds : Nat) -> async Result.Result<(), Errors>;
         get_status : shared query () -> async BucketInfo;
 		clean_up : shared () -> async ();	
 		execute_action_on_resource : shared (args : ActionResourceArgs) -> async Result.Result<IdUrl, Errors>;

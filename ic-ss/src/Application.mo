@@ -1,6 +1,5 @@
 import Cycles "mo:base/ExperimentalCycles";
 import Array "mo:base/Array";
-import Debug "mo:base/Debug";
 import Buffer "mo:base/Buffer";
 import List "mo:base/List";
 import Iter "mo:base/Iter";
@@ -24,12 +23,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
     let OWNER = installation.caller;
 
-//	let ROOT = "/";
 	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE #
 	".grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } "#
 	".cell { min-height: 100px; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: relative; } "#
+	".cell_details { min-height: 250px; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: relative; } "#
+	".tag { color:#0969DA; margin: 0 4px; border: 1px solid #0969DA; border-radius: 8px; padding: 4px 10px; background-color:#B6E3FF;} "#
 	".access_tag { color:white; font-size:large; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: absolute; right: 20px; top: 1px; background-color:#636466;} </style>";
-//	let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
 
  	stable var operators = initArgs.operators;
 	stable var tier  = initArgs.tier;
@@ -115,15 +114,17 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			bucket = "bucket_"#Nat.toText(bucket_counter);
 		});
 		let repo : Types.Repository = {
-			var name = args.name;
+			name = args.name;
 			var description = args.description;
 			access_type = args.access_type;
 			var active_bucket = "";
+			var tags = List.fromArray(args.tags);
 			var buckets = List.nil();
 			var scaling_strategy = Option.get(args.scaling_strategy, #Disabled);
 			created = Time.now();
 			var access_keys = List.nil();
 			var bucket_counter = bucket_counter;
+			var last_update = null;
 		};
 
 		// create a new bucket
@@ -135,6 +136,32 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		repositories := Trie.put(repositories, Utils.text_key(repository_id), Text.equal, repo).0;
 		return #ok(repository_id);
 	};
+
+	/**
+	* Updates an existing repository, just override  description, tags and scaling_strategy if they specified
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func edit_repository (repository_id: Text, args : Types.RepositoryUpdateArgs) : async Result.Result<Text, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);			
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				if (Option.isSome(args.description)) {
+					repo.description:= Utils.unwrap(args.description);
+				};
+				if (Option.isSome(args.tags)) {
+					repo.tags:= List.fromArray(Utils.unwrap(args.tags));
+				};
+				if (Option.isSome(args.scaling_strategy)) {
+					repo.scaling_strategy:= Utils.unwrap(args.scaling_strategy);
+				};
+				return #ok(repository_id);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		};
+		
+	};	
 
 	/**
 	* Removes a  repository. All bucket are also removed, cycles are being sent to the application canister.
@@ -166,6 +193,39 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			};
 		}
 	};
+
+	public shared ({ caller }) func apply_html_resource_template (repository_id : Text, template : ?Text) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				for (bucket_id in List.toIter(repo.buckets)){
+					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					ignore await bucket_actor.apply_html_resource_template(template);
+				};
+
+				return #ok();
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};
+
+	public shared ({ caller }) func apply_cleanup_period (repository_id : Text, seconds : Nat) : async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				for (bucket_id in List.toIter(repo.buckets)){
+					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					ignore await bucket_actor.apply_cleanup_period(seconds);
+				};
+				return #ok();
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};		
 
 	/**
 	* Triggers a cleanup job for the a  repository. If bucket is not specified, then job is triggered for all buckets, otherwise only for the specified bucket.
@@ -385,6 +445,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
 				let r = await bucket_actor.store_resource(content, resource_args);
+				repo.last_update := Option.make(Time.now());
 				try {
 					ignore await _execute_scaling_attempt (repo);
 				}catch (e) {
@@ -407,7 +468,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.store_chunk(content, binding_key);
+				let r = await bucket_actor.store_chunk(content, binding_key);
+				repo.last_update := Option.make(Time.now());
+				r;
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -438,6 +501,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 						await bucket_actor.commit_batch(details.chunks, resource_args);						
 					};
 				};
+				repo.last_update := Option.make(Time.now());
 				try {
 					ignore await _execute_scaling_attempt (repo);
 				}catch (e) {
@@ -461,7 +525,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				let bucket_actor : Types.DataBucketActor = actor (Option.get(target_bucket, repo.active_bucket));
-				await bucket_actor.execute_action_on_resource(args);
+				let r = await bucket_actor.execute_action_on_resource(args);
+				repo.last_update := Option.make(Time.now());
+				r;
 			};
 			case (null) {
 				return #err(#NotFound);
@@ -546,9 +612,15 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)){
 			case (?repo) {
 				if (repo.access_type == #Public) return #err(#OperationNotAllowed);
+				let target = List.find(repo.access_keys, func (k:Types.AccessKey):Bool {k.id == args.id});
+				if (Option.isNull(target)) return #err(#NotFound);
 				let after_remove = List.filter(repo.access_keys, func (k:Types.AccessKey):Bool {k.id != args.id} );
-				if (List.size(after_remove) == List.size(repo.access_keys)) return #err(#NotFound);
 				repo.access_keys:=after_remove;
+				for (bucket_id in List.toIter(repo.buckets)){
+					let bucket = Principal.fromText(bucket_id);
+					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
+					ignore await bucket_actor.remove_access_token(Option.get(Utils.unwrap(target).token, ""));
+				};				
 				return #ok(args.id);
 			};
 			case (null) {
@@ -598,6 +670,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 						name = repo.name;
 						access_type = repo.access_type;
 						description = repo.description;
+						tags = List.toArray(repo.tags);
 						buckets = Buffer.toArray(infos);
 						total_files = total_files;
 						total_directories =  total_directories;		
@@ -648,10 +721,12 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(key)) {
             case (null) { Http.not_found() };
             case (? v)  {
+				///
 				let canister_id = Principal.toText(Principal.fromActor(this));
-				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128464; "#v.name#" </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
+				let root_url = Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2><span><a style=\"margin: 0 5px;\" href=\"" # root_url # "\" >"#Utils.ROOT#"</a></span>  &#128464; "#v.name#" </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
 				
-				directory_html:=directory_html # render_repository(canister_id, key, v);
+				directory_html:=directory_html # render_repository_details(canister_id, key, v);
 				// extra details possible here
 				return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
 			};
@@ -664,7 +739,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				let canister_id = Principal.toText(Principal.fromActor(this));
 				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128464; Overview &#9757; </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
 				for ((id, r) in Trie.iter(repositories)) {
-					directory_html:=directory_html # render_repository(canister_id, id, r);
+					directory_html:=directory_html # render_repository_overview(canister_id, id, r);
 				};
 				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
 			};
@@ -672,7 +747,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		};
 	};
 
-	private func render_repository (canister_id: Text, id:Text, r:Types.Repository) : Text {
+	private func render_repository_overview (canister_id: Text, id:Text, r:Types.Repository) : Text {
 		let path = r.name;
 		let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
 		var resource_html = "<div class=\"cell\">";
@@ -681,11 +756,57 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		resource_html := resource_html # "<p><u>Total buckets</u> : "# Nat.toText(List.size(r.buckets)) ;
 		if (r.access_type == #Public and r.active_bucket != "") {
 			let bucket_url = Utils.build_resource_url({resource_id = ""; canister_id = r.active_bucket; network = initArgs.network; view_mode = #Index});
-			resource_html := resource_html # "<a style=\"float:right; padding-right:10px;\" href=\"" # bucket_url #"\" target = \"_blank\">&#128194; Open</a>";
+			resource_html := resource_html # "<a style=\"float:right; padding-right:10px;\" href=\"" # bucket_url #"\" target = \"_blank\">&#128194; Open active bucket</a>";
+		} else	if (r.access_type == #Private) {
+			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\">&#128273;</span>";
 		};
 		resource_html := resource_html # "</p>";
-		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span></p>";
+		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span>";
+		if (Option.isSome(r.last_update)){
+			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\"><u style=\"padding-left\">Last update</u> : <span class=\"js_date\">"# Int.toText(Utils.unwrap(r.last_update)) # "</span></span>";
+		};
+		resource_html := resource_html # "</p>";
 		resource_html := resource_html # "<p class=\"access_tag\">"# debug_show(r.access_type) # "</p>";
+		if (List.size(r.tags) > 0) {
+			let tags_fmt = Text.join("", List.toIter(List.map(r.tags, func (t : Text):Text {"<span class=\"tag\">"#t#"</span>";})));
+			resource_html := resource_html # "<p>"# tags_fmt # "</p>";
+		};		
+		
+		return  resource_html # "</div>";	
+	};
+
+	private func render_repository_details (canister_id: Text, id:Text, r:Types.Repository) : Text {
+		let path = r.name;
+		let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+		var resource_html = "<div class=\"cell_details\">";
+		resource_html :=resource_html # "<div>&#128464; <a style=\"font-weight:bold; color:#0969DA;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
+		resource_html := resource_html # "<p><i>"# r.description # "</i></p>";
+		if (List.size(r.tags) > 0) {
+			let tags_fmt = Text.join("", List.toIter(List.map(r.tags, func (t : Text):Text {"<span class=\"tag\">"#t#"</span>";})));
+			resource_html := resource_html # "<p><u>Tags</u> : "# tags_fmt # "</p>";
+		};		
+		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span></p>";
+		if (Option.isSome(r.last_update)){
+			resource_html := resource_html # "<p><u>Last update</u> : <span class=\"js_date\">"# Int.toText(Utils.unwrap(r.last_update)) # "</span></p>";
+		};		
+		resource_html := resource_html # "<p><u>Total buckets</u> : "# Nat.toText(List.size(r.buckets)) #"</p>" ;
+		if (r.access_type == #Public) {
+			resource_html := resource_html # "<div class=\"grid\">";
+			for (bucket_id in List.toIter(r.buckets)) {
+				let bucket_url = Utils.build_resource_url({resource_id = ""; canister_id = bucket_id; network = initArgs.network; view_mode = #Index});
+				let bucket_id_fmt = if (r.active_bucket == bucket_id) {
+					"<b>" # bucket_id # "</b>";
+				}else {
+					bucket_id;
+				};
+				resource_html := resource_html # "<div style=\"padding: 0 10px;\">bucket id : <a  href=\"" # bucket_url #"\" target = \"_blank\">"#bucket_id_fmt#"</a></div>";
+			};
+			resource_html := resource_html # "</div>";
+		} else	if (r.access_type == #Private) {
+			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\">&#128273;</span>";
+		};
+		resource_html := resource_html # "<p class=\"access_tag\">"# debug_show(r.access_type) # "</p>";
+		
 		return  resource_html # "</div>";	
 	};	
 
