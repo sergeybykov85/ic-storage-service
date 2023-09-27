@@ -19,11 +19,11 @@ shared (installation) actor class ServiceConfig() = this {
 	// number of cycles to leave on the canister before taking (withdrawal) all cycles
 	stable var remainder_cycles: Nat = 10_000_000_000;
 	// number of cycles to assign for a new app
-	stable var app_init_cycles: Nat = 120_000_000_000;
+	stable var app_init_cycles: Nat = 500_000_000_000;
 	// number of cycles to assign for a new bucket
-	stable var bucket_init_cycles: Nat = 50_000_000_000;
+	stable var bucket_init_cycles: Nat = 200_000_000_000;
 
-	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 1000; memory_mb = 3000};
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 500; memory_mb = 2000};
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
@@ -91,7 +91,7 @@ shared (installation) actor class ServiceConfig() = this {
 	* Allowed only to the owner user or operator.
 	*/
     public shared ({ caller }) func apply_tier_options(t:Types.TierId, settings:Types.TierOptionsArg) {
-    	//assert(caller == OWNER or _is_operator(caller));
+    	assert(caller == OWNER or _is_operator(caller));
         switch (tier_options_get(t)) {
             case (?ext) {
                 let hist = switch (tier_options_history_get(t)) {
