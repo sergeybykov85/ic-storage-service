@@ -18,12 +18,12 @@ shared (installation) actor class ServiceConfig() = this {
     stable let OWNER = installation.caller;
 	// number of cycles to leave on the canister before taking (withdrawal) all cycles
 	stable var remainder_cycles: Nat = 10_000_000_000;
-	// number of cycles to assign for a new app
-	stable var app_init_cycles: Nat = 500_000_000_000;
-	// number of cycles to assign for a new bucket
-	stable var bucket_init_cycles: Nat = 200_000_000_000;
-
-	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 500; memory_mb = 2000};
+	// number of cycles to assign for a new app, default value
+	stable var app_init_cycles: Nat = 800_000_000_000;
+	// number of cycles to assign for a new bucket, default value
+	stable var bucket_init_cycles: Nat = 500_000_000_000;
+	// default scaling options if AUTO mode is specified and no MemoryThreshold given
+	stable var scaling_memory_options : Types.MemoryThreshold = {heap_mb = 300; memory_mb = 1500};
 
 	// operator has enough power, but can't apply a new operator list or change the owner, etc
 	stable var operators:[Principal] = [];
