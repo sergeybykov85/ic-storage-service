@@ -160,7 +160,13 @@ module {
 		description : ?Text;
 		scaling_strategy : ?ScalingStarategy;
 		tags : ?[Text];
-	};	
+	};
+
+	public type CommonUpdateArgs = {
+		id: Text;
+		name : ?Text;
+		description : ?Text;
+	};		
 
 	/**
 	* Trier represents the list of opportunities.
@@ -399,7 +405,7 @@ module {
     public type DataBucketActor = actor {
 		register_access_token : shared(args : AccessToken) -> async Result.Result<(), Errors>;
 		remove_access_token : shared(token : Text) -> async Result.Result<(), Errors>;
-		new_directory : shared (args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
+		new_directory : shared (break_on_duplicate:Bool, args : ResourceArgs) -> async Result.Result<IdUrl, Errors>;
 		apply_html_resource_template : shared (template : ?Text) -> async Result.Result<(), Errors>;
 		apply_cleanup_period : shared (seconds : Nat) -> async Result.Result<(), Errors>;
         get_status : shared query () -> async BucketInfo;

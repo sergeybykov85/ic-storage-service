@@ -93,6 +93,70 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	};
 
 	/**
+	* Updates the existing customer : name,description
+	* Allowed only to the owner user or operator.
+	*/
+	public shared ({caller}) func update_customer (args : Types.CommonUpdateArgs): async Result.Result<(), Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		let identity = Principal.fromText(args.id);
+		switch (customer_get(identity)) {
+			case (?customer) {
+				if (Option.isSome(args.name)) {
+					customer.name:= Utils.unwrap(args.name);
+				};
+				if (Option.isSome(args.description)) {
+					customer.description:= Utils.unwrap(args.description);
+				};				
+			};
+			case (null) { return #err(#NotFound);};
+		};
+		return #ok();
+	};
+	/**
+	* Updates an existing app.
+	* Allowed only to the application owner.
+	*/
+	public shared ({caller}) func update_my_application (args : Types.CommonUpdateArgs): async Result.Result<(), Types.Errors> {
+		let identity = Principal.fromText(args.id);
+		switch (application_get(identity)) {
+			case (?application) {
+				// access control : application owner
+				if (application.owner != caller) return #err(#AccessDenied);				
+				if (Option.isSome(args.name)) {
+					application.name:= Utils.unwrap(args.name);
+				};
+				if (Option.isSome(args.description)) {
+					application.description:= Utils.unwrap(args.description);
+				};				
+			};
+			case (null) { return #err(#NotFound);};
+		};
+		return #ok();
+	};
+
+	public shared ({caller}) func get_my_customer (): async Result.Result<Types.CustomerView, Types.Errors> {
+		switch (customer_get(caller)) {
+			case (?customer) { return #ok(Utils.customer_view(customer)); };
+			case (null) { return #err(#NotFound);};
+		};
+	};
+
+		/**
+	* Updates the existing customer : name,description
+	* Allowed only to the owner user or operator.
+	*/
+	public shared ({caller}) func update_my_customer (name:Text, description:Text): async Result.Result<(), Types.Errors> {
+		switch (customer_get(caller)) {
+			case (?customer) {
+				customer.name:= name;
+				customer.description:= description;
+			};
+			case (null) { return #err(#NotFound);};
+		};
+		return #ok();
+	};
+
+	/**
 	* Registers a new customer.
 	* Allowed only to the owner or operator of the storage service.
 	*/

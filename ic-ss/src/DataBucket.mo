@@ -296,7 +296,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		}
 	};
 
-	private func _new_directory (args : Types.ResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
+	private func _new_directory (break_on_duplicate:Bool, args : Types.ResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		let canister_id = Principal.toText(Principal.fromActor(this));	
 		let name_tokens : [Text] = Iter.toArray(Text.tokens(args.name, #char '/'));
 		let name_to_apply = name_tokens[0];
@@ -325,7 +325,21 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 		switch (resources.get(directory_id)) {
 			case (?f) { 
-				return #err(#DuplicateRecord);
+				// break the logic based on criteria
+				if (break_on_duplicate) return #err(#DuplicateRecord);
+				// continue with path creation
+				if  (Array.size(name_tokens) > 1) {
+    				let next_iteration = Array.subArray<Text>(name_tokens, 1, Array.size(name_tokens) -1);
+					let r = _new_directory (break_on_duplicate, {
+						content_type = args.content_type;
+						name = Text.join("/", next_iteration.vals());
+						parent_path = ?final_path;
+						parent_id = null;
+						ttl = args.ttl;
+					});
+					return r;
+				};
+				return #ok(build_id_path_url(directory_id, final_path, canister_id));				
 			};
 				
 			case (null) {
@@ -348,7 +362,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 				if  (Array.size(name_tokens) > 1) {
     				let next_iteration = Array.subArray<Text>(name_tokens, 1, Array.size(name_tokens) -1);
-					let r = _new_directory ({
+					let r = _new_directory (break_on_duplicate, {
 						content_type = args.content_type;
 						name = Text.join("/", next_iteration.vals());
 						parent_path = ?final_path;
@@ -389,14 +403,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* If parent_path is specified, then directory is created under the mentioned location if it is exist.
 	* If parent location is mentioned but it is not exist, then error is returned.
 	* If ttl is specified, then the directory will be removed once this time is reached.
-	* Folders are used to organize resources, for convenience, or to deploy logically groupped files
+	* Folders are used to organize resources, for convenience, or to deploy logically groupped files.
+	* If break_on_duplicate is false, then method doesn't break if direcotry or subdirectory is exists. 
+	* In that case method returns  the directory or continue to generate subdirectories.
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func new_directory(args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func new_directory(break_on_duplicate:Bool, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		if (Utils.invalid_directory_name(args.name)) return #err(#InvalidRequest);
-		_new_directory (args);			
-	};	
+		// break on duplicates
+		_new_directory (break_on_duplicate, args);			
+	};
+
 	/**
 	* Executes an action on the resource : copy, delete or rename.
 	* Allowed only to the owner or operator of the bucket.

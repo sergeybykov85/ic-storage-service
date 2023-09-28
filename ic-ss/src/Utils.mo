@@ -47,8 +47,6 @@ module {
     let RESOURCE_ROUTE = "/r/";
     // it is a http route to download resource by its ID
     let DOWNLOAD_ROUTE = "/d/";
-    // it is a http route when names insead of ids are used to identify a resource
-    //let NAME_BASED_ROUTE = "/ns/";
 
     private type ResourceUrlArgs = {
         resource_id : Text;

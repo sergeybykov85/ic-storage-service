@@ -141,7 +141,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	* Updates an existing repository, just override  description, tags and scaling_strategy if they specified
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func edit_repository (repository_id: Text, args : Types.RepositoryUpdateArgs) : async Result.Result<Text, Types.Errors> {
+	public shared ({ caller }) func update_repository (repository_id: Text, args : Types.RepositoryUpdateArgs) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);			
 		switch (repository_get(repository_id)) {
 			case (?repo) {
@@ -417,23 +417,46 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 	/**
 	* Registers a new directory (empty) in the active bucket of the specified repository.  
+	* If directory or subdirectory already present, then error is thrown.
 	* Allowed only to the owner or operator of the app.
 	*/
-	public shared ({ caller }) func new_directory(repository_id : Text, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func create_directory(repository_id : Text, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				// control of nested directories
-				if  (tier.options.nested_directory_forbidden and  (Option.isSome(args.parent_path) or Option.isSome(args.parent_id))) return #err(#TierRestriction);
+				if  (tier.options.nested_directory_forbidden and  (Option.isSome(args.parent_path) or Option.isSome(args.parent_id) or Text.contains(args.name, #char '/'))) return #err(#TierRestriction);
 
 				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
-				await bucket_actor.new_directory(args);
+				await bucket_actor.new_directory(true, args);
 			};
 			case (null) {
 				return #err(#NotFound);
 			};
 		}
-	};	
+	};
+
+	/**
+	* Registers a new directory (empty) in the active bucket of the specified repository.  
+	* If path of the directory is already exists, just return its id, no error.
+	* If subpath is exist but other part is absent, then creates "needed path".
+	* Allowed only to the owner or operator of the app.
+	*/
+	public shared ({ caller }) func ensure_directory(repository_id : Text, args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);		
+		switch (repository_get(repository_id)) {
+			case (?repo) {
+				// control of nested directories
+				if  (tier.options.nested_directory_forbidden and  (Option.isSome(args.parent_path) or Option.isSome(args.parent_id) or Text.contains(args.name, #char '/'))) return #err(#TierRestriction);
+
+				let bucket_actor : Types.DataBucketActor = actor (repo.active_bucket);
+				await bucket_actor.new_directory(false, args);
+			};
+			case (null) {
+				return #err(#NotFound);
+			};
+		}
+	};		
 
 	/**
 	* Stores a resource (till 2 mb) in the specified repository
