@@ -23,7 +23,7 @@ import Types "./Types";
 import SHA256 "./Sha256";
 
 module {
-
+    public let VERSION = "0.1";
     public let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
     public let ROOT = "/";
     public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #FFFDE7; color:#090909; font-family: helvetica; }";

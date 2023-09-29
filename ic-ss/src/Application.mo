@@ -597,7 +597,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				let key_id = Utils.hash_time_based(canister_id # "access_key", _internal_increment);
 				// lets have a long secret
 				let secret_token:Text = Utils.hash(canister_id, [Int.toText(now), args.entropy]) # 
-				Utils.subText(Utils.hash(repository_id, [Int.toText(now), args.entropy]), 0, 20);
+				Utils.subText(Utils.hash(repository_id, [Int.toText(now), args.entropy]), 0, 32);
 				let ak:Types.AccessKey =  {
 					id = key_id;
 					name = args.name;
@@ -874,6 +874,10 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 	system func postupgrade() {
+	};
+
+	public query func get_version() : async Text {
+		return Utils.VERSION;
 	};
 	
   	public shared func wallet_receive() {

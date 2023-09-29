@@ -54,11 +54,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	stable var resource_data : Trie.Trie<Text, [Blob]> = Trie.empty();
 	stable var access_token : Trie.Trie<Text, Types.AccessToken> = init_access_tokens(initArgs.access_token);
-	
-	// number of all res
-	stable var total_files : Nat = 0;
-	// number of directories
-	stable var total_directories : Nat = 0;
+
 	// increment counter, internal needs
 	stable var _internal_increment : Nat = 0;
 	// -------------------------------------------------
@@ -76,6 +72,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	*/
     private func resource_data_get(id : Text) : ?[Blob] = Trie.get(resource_data, Utils.text_key(id), Text.equal);
 	private func access_token_get(id : Text) : ?Types.AccessToken = Trie.get(access_token, Utils.text_key(id), Text.equal);
+
 
 	/**
 	* Deletes resource by its id (either directory or file).
@@ -120,11 +117,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	private func _delete_resource(resource_id : Text) : Result.Result<(Types.IdUrl), Types.Errors> {
 		switch (resources.get(resource_id)) {
 			case (?resource) {
-				var removed_directories = 0;
-				var removed_files = 0;
-				let (f, d) = _delete_by_id (resource_id);
-				removed_files := removed_files + f;
-				removed_directories := removed_directories + d;				
+				ignore _delete_by_id (resource_id);
+		
 
 				// check if it is a leaf, need to update the folder and exclude a leaf
 				if (Option.isSome(resource.parent)) {
@@ -133,9 +127,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						case (null) {};
 					};
 				};
-				// update global var
-				if (removed_directories > 0) { total_directories := total_directories - removed_directories; };
-				if (removed_files > 0) { total_files := total_files - removed_files; };
 				return #ok({id = resource_id; url = ""; partition = "" });	
 			};
 			case (_) {
@@ -210,11 +201,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	public shared query func access_list() : async (Types.AccessList) {
 		return { owner = OWNER; operators = operators };
 	};
-
-	public query func get_tokens() : async [Types.AccessToken] {
-		return Iter.toArray(Iter.map (Trie.iter(access_token), 
-			func (i: (Text, Types.AccessToken)): Types.AccessToken {i.1}));
-	};	
 
 	/**
 	* Stores a resource (till 2 mb)
@@ -358,7 +344,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					case (?p) { p.leafs := List.push(directory_id, p.leafs); };
 					case (null) {};
 				};
-				total_directories  := total_directories + 1;
 
 				if  (Array.size(name_tokens) > 1) {
     				let next_iteration = Array.subArray<Text>(name_tokens, 1, Array.size(name_tokens) -1);
@@ -598,18 +583,35 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		switch (view_mode) {
 			case (#Index) {
 				let canister_id = Principal.toText(Principal.fromActor(this));
-				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128193; / </h2><hr/>";
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>&#128193; / </h2>";
+				var _t_files = 0;
+				var _t_dirs:Nat = 0; 
+
 				var files = "";
 				var dirs = "";
 				for ((id, r) in resources.entries()) {
 					if (Option.isNull(r.parent)) {
 						switch (r.resource_type) {
-							case (#Directory){	dirs := dirs # render_resource(canister_id, id, r, null, token); };
-							case (#File) { files := files # render_resource(canister_id, id, r, null, token); };
+							case (#Directory){	
+								dirs := dirs # render_resource(canister_id, id, r, null, token); 
+								_t_dirs := _t_dirs + 1;
+							};
+							case (#File) { 
+								files := files # render_resource(canister_id, id, r, null, token); 
+								_t_files := _t_files + 1;
+							};
 						} 
 					};
 		
 				};
+				directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(_t_dirs) # "</span>";
+				directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(_t_files) # "</span></span>";
+				let total_f = Trie.size(resource_data);
+				// dirs
+				let total_d:Nat = resources.size() - total_f;
+				directory_html := directory_html # "<span style=\"float:right;\"><i>Total directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_d) # "</span>";
+				directory_html := directory_html # "<i>Total files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_f) # "</span></span><hr/>";
+
 				directory_html:=directory_html # dirs;
 				directory_html:=directory_html # files;
 				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # Utils.FORMAT_DATES_SCRIPT # "</body></html>"));
@@ -629,7 +631,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				if (v.resource_type == #Directory) {
 					let canister_id = Principal.toText(Principal.fromActor(this));
 					let directory_path = full_path(v);
-					var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>"# clickable_path(directory_path, canister_id, token)#"</h2><hr/>";
+					var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2>"# clickable_path(directory_path, canister_id, token)#"</h2>";
+				
 					var files = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
 					var dirs = Buffer.Buffer<(Text, Types.Resource)>(List.size(v.leafs));
 					for (leaf in List.toIter(v.leafs)) {
@@ -641,6 +644,15 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 							case (null) {};
 						};
 					};
+
+					directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(dirs.size()) # "</span>";
+					directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(files.size()) # "</span></span>";
+					let total_f = Trie.size(resource_data);
+					// dirs
+					let total_d:Nat = resources.size() - total_f;
+					directory_html := directory_html # "<span style=\"float:right;\"><i>Total directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_d) # "</span>";
+					directory_html := directory_html # "<i>Total files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_f) # "</span></span><hr/>";				
+
 					// render dirs
 					Buffer.iterate<(Text, Types.Resource)>(dirs, func (id, r) {
 						directory_html := directory_html # render_resource(canister_id, id, r, ?directory_path, token);
@@ -857,7 +869,6 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			var leafs = null;
 			did = ?did;
 		});
-		total_files  := total_files + 1;
 		// store data in stable var
 		resource_data := Trie.put(resource_data, Utils.text_key(did), Text.equal, payload).0;
 		return #ok(build_id_url(resource_id, canister_id));
@@ -1041,12 +1052,20 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		return cleanup_period_sec;
 	};	
 
+	public query func get_version() : async Text {
+		return Utils.VERSION;
+	};
+
 	/**
 	* Returns information about memory usage and number of created files and folders.
 	* This method could be extended.
 	*/
 	public query func get_status() : async Types.BucketInfo {
 		let id = Principal.fromActor(this);
+		// only files
+		let f = Trie.size(resource_data);
+		// dirs
+		let d:Nat = resources.size() - f;
 		return {
 			id = id;
 			name = NAME;
@@ -1054,8 +1073,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			memory_mb = Utils.get_memory_in_mb();
 			heap_mb = Utils.get_heap_in_mb();
 			chunks = chunk_state.size();
-			files =  total_files;
-			directories = total_directories;
+			files =  f;
+			directories = d;
 			url = Utils.build_resource_url({resource_id = ""; canister_id = Principal.toText(id); network = NETWORK; view_mode = #Index});
 		
 		};
