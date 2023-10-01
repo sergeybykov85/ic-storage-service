@@ -26,8 +26,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
     let OWNER = installation.caller;
 	// expiration period for chunk = 10 mins (in nanosec)
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
-	// def scan period is 15 min = 900 sec
-	let CLEAN_UP_PERIOD_SEC = 900;
+	// def scan period is 30 min = 1800 sec
+	let CLEAN_UP_PERIOD_SEC = 1800;
 	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # "</style>";
 
 	stable let ACCESS_TYPE = initArgs.access_type;
