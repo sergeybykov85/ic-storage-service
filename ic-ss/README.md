@@ -109,7 +109,12 @@ _Directory `screens` contains some illustration from the local replica. All arti
     * opportunity to see the certain repo by a direct link
     * repository has a link to active bucket (http entry point) for the convenience
 3. [Corrections and improvement for the DataBucket canister] 
-4. [Integration of the ICS2 solution into existing application]
+4. [Opportunity to control the output template for html files] 
+    * default template for the .html file is configured by default
+    * repository owner can apply another template for entire repo (the same value is set for all buckets of the repo)
+    * template is applied only when resource is taken by http entry point and if resource ends with ".html"
+    * exampple of the template : `<div>${VALUE}</div>``, where ${VALUE} is a reserved placeholder. User can apply any tags around the ${VALUE} according to his needs
+5. [Integration of the ICS2 solution into existing application]
     * ICS2 storage integrated into DCM application (one of the versions)
     * Article (with single or multiple locales) entry could be published into IC ecosystem according to the criteria
     * DCM application displays the links to the articles published in IC platform in different places
