@@ -73,6 +73,46 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
     private func resource_data_get(id : Text) : ?[Blob] = Trie.get(resource_data, Utils.text_key(id), Text.equal);
 	private func access_token_get(id : Text) : ?Types.AccessToken = Trie.get(access_token, Utils.text_key(id), Text.equal);
 
+	private func is_parent_readonly (id :Text) : Bool {
+		var r:Bool = false;
+		switch (resources.get(id)){
+			case (?v) {
+				r := _is_readonly(v);
+				if (r) return r;
+				if (Option.isSome(v.parent)) {
+					r := is_parent_readonly(Utils.unwrap(v.parent)); 
+					if (r) return r;
+				};
+			};
+			case (null) {};
+		};
+		return r;
+	};
+
+	private func is_leaf_readonly (id:Text) : Bool {
+		var r:Bool = false;
+		switch (resources.get(id)){
+			case (?v) {
+				r := _is_readonly(v);
+				if (r) return r;
+				if (not List.isNil(v.leafs)) {
+					for (leaf in List.toIter(v.leafs)){
+						r := is_leaf_readonly(leaf);
+						if (r) return r;
+					};
+				};	
+			};
+			case (null) {};
+		};
+		return r;
+	};		
+
+	private func _is_readonly (r: Types.Resource) : Bool {
+		if (Option.isSome(r.read_only)) { 
+			return (Time.now() < Utils.unwrap(r.read_only));
+		};
+		return false;	
+	};
 
 	/**
 	* Deletes resource by its id (either directory or file).
@@ -117,8 +157,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	private func _delete_resource(resource_id : Text) : Result.Result<(Types.IdUrl), Types.Errors> {
 		switch (resources.get(resource_id)) {
 			case (?resource) {
+
+				// check if any parent is readonly
+				if (is_parent_readonly(resource_id)) return #err(#OperationNotAllowed);
+				// check if any leaf is readonly
+				if (is_leaf_readonly(resource_id)) return #err(#OperationNotAllowed);				
+				
 				ignore _delete_by_id (resource_id);
-		
 
 				// check if it is a leaf, need to update the folder and exclude a leaf
 				if (Option.isSome(resource.parent)) {
@@ -133,7 +178,32 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				return #err(#NotFound);
 			};
 		};
-	};	
+	};
+
+	private func _replace_resource(args : Types.ActionResourceArgs) : Result.Result<(Types.IdUrl), Types.Errors> {
+		switch (resources.get(args.id)) {
+			case (?resource) {
+				// assert if not a file
+				if (resource.resource_type == #Directory) { return #err(#OperationNotAllowed); };
+
+				// check if any parent is readonly
+				if (is_parent_readonly(args.id)) { return #err(#OperationNotAllowed); };
+
+				let payload = Option.get(args.payload,Blob.fromArray([]));
+				let content_size = payload.size();				
+				if (Option.isSome(resource.did)) {
+					// replace resource itself
+					let did = Utils.unwrap(resource.did);
+					resource_data := Trie.put(resource_data, Utils.text_key(did), Text.equal, [payload]).0;
+				};
+				resource.content_size := content_size;
+				return #ok(build_id_url(args.id, Principal.toText(Principal.fromActor(this))));
+			};
+			case (_) {
+				return #err(#NotFound);
+			};
+		};
+	};		
 
 	private func _clean_up_chunks() : () {
 		let now = Time.now();
@@ -170,6 +240,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
+	private func _clean_up_readonly() : () {
+		let now = Time.now();
+		var read_only = Buffer.Buffer<Types.Resource>(5);
+		for ((key, r) in resources.entries())	{
+			if (Option.isSome(r.read_only)) { 
+				if (now > Utils.unwrap(r.read_only))  {
+					r.read_only:=null;
+				};
+			};
+		};
+	};	
+
 	private func _clean_up_access(): () {
 		let now = Time.now();
 		// remove expired access keys 
@@ -186,6 +268,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		_clean_up_chunks();
 		_clean_up_ttl();
 		_clean_up_access();
+		_clean_up_readonly();
 	};
 	
 	stable var timer_cleanup = Timer.recurringTimer(#seconds(cleanup_period_sec), _clean_up_expired);	
@@ -322,6 +405,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = ?final_path;
 						parent_id = null;
 						ttl = args.ttl;
+						read_only = args.read_only;
 					});
 					return r;
 				};
@@ -333,7 +417,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					resource_type = #Directory;
 					var http_headers = [];
 					var ttl = args.ttl;
-					content_size = 0;
+					var read_only = args.read_only;
+					var content_size = 0;
 					created = Time.now();
 					var name = name_to_apply;
 					var parent = parent_directory_id;
@@ -353,6 +438,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = ?final_path;
 						parent_id = null;
 						ttl = args.ttl;
+						read_only = args.read_only;
 					});
 					return r;
 				};
@@ -410,7 +496,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (#Copy) { _copy_resource(args);};
 			case (#Delete) {_delete_resource (args.id)};
 			case (#Rename) {_rename_resource(args); };
+			case (#Replace) {_replace_resource(args); };
 			case (#TTL) { _ttl_resource(args); };
+			case (#ReadOnly) { _readonly_resource(args); };
 			case (#HttpHeaders) {_apply_headers(args.id, Option.get(args.http_headers, []))};
 		}
 	};
@@ -540,6 +628,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			var resource_html = "";
 			let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 			resource_html :=resource_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
+			// render readonly icon
+			if (Option.isSome(r.read_only)) {
+				resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+			};
+			// render ttl icon		
 			if (Option.isSome(r.ttl)) {
 				resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 			};
@@ -555,9 +648,12 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 					let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
+					if (Option.isSome(r.read_only)) {
+						resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+					};
 					if (Option.isSome(r.ttl)) {
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
-					};
+					};					
 					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_raw, token) #"\" target = \"_blank\"> raw link</a>";
@@ -566,6 +662,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				case (null) {
 					let url = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
+					if (Option.isSome(r.read_only)) {
+						resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+					};					
 					if (Option.isSome(r.ttl)) {
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 					};
@@ -862,7 +961,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			resource_type = #File;
 			var http_headers = header;
 			var ttl = resource_args.ttl;
-			content_size = content_size;
+			var read_only = resource_args.read_only;
+			var content_size = content_size;
 			created = Time.now();
 			var name = resource_args.name;
 			var parent = parent;
@@ -882,6 +982,12 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			case (?res) {
 				// directory rename is not supported yet
 				if (res.resource_type == #Directory) { return #err(#OperationNotAllowed); };
+
+				// check if any parent is readonly
+				if (is_parent_readonly(args.id)) return #err(#OperationNotAllowed);
+				// check if any leaf is readonly
+				if (is_leaf_readonly(args.id)) return #err(#OperationNotAllowed);
+
 				let canister_id = Principal.toText(Principal.fromActor(this));				
 				let file_name = Option.get(args.name, res.name);
 				if (Utils.invalid_name(file_name)) return #err(#InvalidRequest);				
@@ -950,7 +1056,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			};
 		};
 		#ok(build_id_url(args.id, Principal.toText(Principal.fromActor(this))));
-	};	
+	};
+
+	private func _readonly_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
+		switch (resources.get(args.id)) {
+			case (?res) { 
+				res.read_only := args.read_only; };
+			case (_) {
+				return #err(#NotFound);
+			};
+		};
+		#ok(build_id_url(args.id, Principal.toText(Principal.fromActor(this))));
+	};
 
 	private func _copy_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
@@ -1007,6 +1124,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = null;
 						parent_id = parent_id;
 						ttl = res.ttl;
+						read_only = res.read_only;
 					},
 					?res.http_headers
 				);

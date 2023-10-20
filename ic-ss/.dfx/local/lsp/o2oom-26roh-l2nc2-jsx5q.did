@@ -1,0 +1,146 @@
+type AccessList = record { owner : principal; operators : vec principal };
+type AccessToken = record { valid_to : opt Time; created : Time; token : text };
+type AccessType = variant { Private; Public };
+type ActionResourceArgs = record {
+  id : text;
+  ttl : opt nat;
+  action : ResourceAction;
+  http_headers : opt vec NameValue;
+  read_only : opt nat;
+  name : opt text;
+  payload : opt vec nat8;
+  parent_path : opt text;
+};
+type BucketArgs = record {
+  name : text;
+  network : Network;
+  operators : vec principal;
+  access_token : opt vec AccessToken;
+  access_type : AccessType;
+};
+type BucketInfo = record {
+  id : principal;
+  url : text;
+  files : nat;
+  name : text;
+  directories : nat;
+  heap_mb : int;
+  memory_mb : int;
+  cycles : int;
+  chunks : nat;
+};
+type DataBucket = service {
+  access_list : () -> (AccessList) query;
+  apply_cleanup_period : (nat) -> (Result_2);
+  apply_html_resource_template : (opt text) -> (Result_2);
+  apply_operators : (vec principal) -> () oneway;
+  available_cycles : () -> (nat) query;
+  clean_up_expired : () -> ();
+  commit_batch : (vec text, ResourceArgs) -> (Result);
+  commit_batch_by_key : (text, ResourceArgs) -> (Result);
+  execute_action_on_resource : (ActionResourceArgs) -> (Result);
+  get_cleanup_period_sec : () -> (nat) query;
+  get_directory_by_path : (text) -> (Result_4) query;
+  get_html_resource_template : () -> (opt text) query;
+  get_resource : (text) -> (Result_3) query;
+  get_status : () -> (BucketInfo) query;
+  get_version : () -> (text) query;
+  http_request : (Request) -> (Response) query;
+  http_request_streaming_callback : (StreamingCallbackToken) -> (
+      StreamingCallbackResponse,
+    ) query;
+  new_directory : (bool, ResourceArgs) -> (Result);
+  register_access_token : (AccessToken) -> (Result_2);
+  remove_access_token : (text) -> (Result_2);
+  store_chunk : (vec nat8, opt text) -> (Result_1);
+  store_resource : (vec nat8, ResourceArgs) -> (Result);
+  wallet_receive : () -> () oneway;
+  withdraw_cycles : (WitdrawArgs) -> ();
+};
+type DirectoryView = record {
+  id : text;
+  url : text;
+  created : int;
+  total_size : nat;
+  total_files : nat;
+};
+type Errors = variant {
+  NotRegistered;
+  AccessDenied;
+  TierRestriction;
+  ExceededAllowedLimit;
+  OperationNotAllowed;
+  NotFound;
+  DuplicateRecord;
+  TierNotFound;
+  InvalidRequest;
+};
+type IdUrl = record { id : text; url : text; partition : text };
+type NameValue = record { value : text; name : text };
+type Network = variant { IC; Local : text };
+type Request = record {
+  url : text;
+  method : text;
+  body : vec nat8;
+  headers : vec record { text; text };
+};
+type ResourceAction = variant {
+  TTL;
+  HttpHeaders;
+  Copy;
+  Rename;
+  ReadOnly;
+  Replace;
+  Delete;
+};
+type ResourceArgs = record {
+  ttl : opt nat;
+  read_only : opt nat;
+  name : text;
+  content_type : opt text;
+  parent_id : opt text;
+  parent_path : opt text;
+};
+type ResourceType = variant { File; Directory };
+type ResourceView = record {
+  id : text;
+  ttl : opt nat;
+  url : text;
+  created : int;
+  http_headers : vec record { text; text };
+  name : text;
+  content_size : nat;
+  resource_type : ResourceType;
+};
+type Response = record {
+  body : vec nat8;
+  headers : vec record { text; text };
+  streaming_strategy : opt StreamingStrategy;
+  status_code : nat16;
+};
+type Result = variant { ok : IdUrl; err : Errors };
+type Result_1 = variant { ok : text; err : Errors };
+type Result_2 = variant { ok; err : Errors };
+type Result_3 = variant { ok : ResourceView; err : Errors };
+type Result_4 = variant { ok : DirectoryView; err : Errors };
+type StreamingCallback = func (StreamingCallbackToken) -> (
+    StreamingCallbackResponse,
+  ) query;
+type StreamingCallbackResponse = record {
+  token : opt StreamingCallbackToken;
+  body : vec nat8;
+};
+type StreamingCallbackToken = record {
+  key : text;
+  index : nat;
+  content_encoding : text;
+};
+type StreamingStrategy = variant {
+  Callback : record {
+    token : StreamingCallbackToken;
+    callback : StreamingCallback;
+  };
+};
+type Time = int;
+type WitdrawArgs = record { to : principal; remainder_cycles : opt nat };
+service : DataBucket

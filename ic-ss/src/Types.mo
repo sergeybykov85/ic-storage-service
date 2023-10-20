@@ -247,6 +247,7 @@ module {
 		// direcotry id. It has a precedence over the parent_path, but this field is not supported in all methods
 		parent_id : ?Text;
 		ttl : ?Nat;
+		read_only : ?Nat;
 	};
 
 	public type ResourceAction = {
@@ -254,15 +255,19 @@ module {
 		#Delete;
 		#Rename;
 		#TTL;
+		#Replace;
+		#ReadOnly;
 		#HttpHeaders;
 	};
 	// Type contains possible required data to make some action with an existing resource
 	public type ActionResourceArgs = {
 		id : Text;
 		action : ResourceAction;
+		payload : ?Blob;
 		name : ?Text;
 		parent_path : ?Text;
 		ttl : ?Nat;
+		read_only : ?Nat;
 		http_headers: ?[NameValue];
 	};	
 
@@ -270,7 +275,10 @@ module {
 		resource_type : ResourceType;
 		var http_headers : [(Text, Text)];
 		var ttl : ?Nat;
-		content_size : Nat;
+		// time if no modification allowed : remove or replace (if supported)
+		var read_only : ?Nat;
+		// resource could be replaced (to remain the same URL)
+		var content_size : Nat;
 		created : Int;
 		var name : Text;
 		// folder reference (hash, not the name)
