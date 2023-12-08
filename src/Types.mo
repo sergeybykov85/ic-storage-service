@@ -280,6 +280,7 @@ module {
 		// resource could be replaced (to remain the same URL)
 		var content_size : Nat;
 		created : Int;
+		var updated : ?Int;
 		var name : Text;
 		// folder reference (hash, not the name)
 		var parent : ?Text;

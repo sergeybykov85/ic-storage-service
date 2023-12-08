@@ -28,7 +28,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
 	// def scan period is 30 min = 1800 sec
 	let CLEAN_UP_PERIOD_SEC = 1800;
-	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # "</style>";
+	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # " .js_date {width:160px;} </style>"; 
 
 	stable let ACCESS_TYPE = initArgs.access_type;
 	stable let NAME = initArgs.name;
@@ -154,7 +154,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* If it is a file and it is under the folder, then file is removed and the leafs of the folder is updated.
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	private func _delete_resource(resource_id : Text) : Result.Result<(Types.IdUrl), Types.Errors> {
+	private func _delete_resource(resource_id : Text) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(resource_id)) {
 			case (?resource) {
 
@@ -168,7 +168,10 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				// check if it is a leaf, need to update the folder and exclude a leaf
 				if (Option.isSome(resource.parent)) {
 					switch (resources.get(Utils.unwrap(resource.parent))) {
-						case (?f) {	f.leafs := List.mapFilter<Text, Text>(f.leafs, func lf = if (lf == resource_id) { null } else { ?lf });	};
+						case (?f) {	
+							f.leafs := List.mapFilter<Text, Text>(f.leafs, func lf = if (lf == resource_id) { null } else { ?lf });	
+							f.updated := ?Time.now();
+						};
 						case (null) {};
 					};
 				};
@@ -180,7 +183,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		};
 	};
 
-	private func _replace_resource(args : Types.ActionResourceArgs) : Result.Result<(Types.IdUrl), Types.Errors> {
+	private func _replace_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
 			case (?resource) {
 				// assert if not a file
@@ -197,6 +200,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					resource_data := Trie.put(resource_data, Utils.text_key(did), Text.equal, [payload]).0;
 				};
 				resource.content_size := content_size;
+				resource.updated := ?Time.now();
 				return #ok(build_id_url(args.id, Principal.toText(Principal.fromActor(this))));
 			};
 			case (_) {
@@ -290,9 +294,35 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Allowed only to the owner or operator of the bucket.
 	*/
 	public shared ({ caller }) func store_resource (content : Blob, resource_args : Types.ResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
-		assert(caller == OWNER or _is_operator(caller));
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		_store_resource ([content], resource_args, null);
 	};
+
+	/**
+	* Replace a resource (till 2 mb). The same effect could be achived by calling execute_action_on_resource!
+	* It is a shortcut version to replace a content.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func replace_resource (id: Text, content : Blob) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		_replace_resource ({
+			id = id;
+			action = #Replace;
+			payload = ?content;
+			content_type = null; name = null;
+			parent_path = null; ttl = null; http_headers = null; read_only = null;
+		});
+	};
+
+	/**
+	* Deletes the resouce by its id. The same effect could be achived by calling execute_action_on_resource!
+	* It is a shortcut version to delete a content.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func delete_resource (id: Text) : async Result.Result<Types.IdUrl, Types.Errors> {
+		assert(caller == OWNER or _is_operator(caller));
+		_delete_resource (id);
+	};		
 
 	/**
 	* Triggers a clean up process (expired chunks, expired resources based on ttl)
@@ -420,13 +450,17 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					var read_only = args.read_only;
 					var content_size = 0;
 					created = Time.now();
+					var updated = null;
 					var name = name_to_apply;
 					var parent = parent_directory_id;
 					var leafs = List.nil();
 					did = null;
 				});
 				switch (parent_opt){
-					case (?p) { p.leafs := List.push(directory_id, p.leafs); };
+					case (?p) { 
+						p.leafs := List.push(directory_id, p.leafs);
+						p.updated := ?Time.now();
+					};
 					case (null) {};
 				};
 
@@ -490,7 +524,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* Executes an action on the resource : copy, delete or rename.
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func execute_action_on_resource(args : Types.ActionResourceArgs) : async Result.Result<(Types.IdUrl), Types.Errors> {
+	public shared ({ caller }) func execute_action_on_resource(args : Types.ActionResourceArgs) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		switch (args.action){
 			case (#Copy) { _copy_resource(args);};
@@ -653,7 +687,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					};
 					if (Option.isSome(r.ttl)) {
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
-					};					
+					};	
+					switch (r.updated) {
+						case (?updated) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(updated)#"</span>"; };
+						case (null) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" >--- / ---</span>"; }	
+					};			
 					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_raw, token) #"\" target = \"_blank\"> raw link</a>";
@@ -936,6 +974,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			switch (resources.get(directory_id)) {
 				case (?f) {
 					f.leafs := List.push(resource_id, f.leafs);
+					f.updated := ?Time.now();
 					//ignore resources.replace(directory_id, f);
 				};
 				// directory is not found
@@ -964,6 +1003,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			var read_only = resource_args.read_only;
 			var content_size = content_size;
 			created = Time.now();
+			var updated = null;
 			var name = resource_args.name;
 			var parent = parent;
 			var leafs = null;
@@ -998,11 +1038,15 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						if (Option.isSome(resources.get(resource_id))) { return #err(#DuplicateRecord);};
 						res.name := file_name;
 						res.parent:= ?parent;
+						res.updated:= ?Time.now();
 						resources.put(resource_id, res);	
 						resources.delete(args.id);
 						// add a new one; exclude old leaf
 						switch (resources.get(parent)) {
-							case (?p) { p.leafs := List.mapFilter<Text, Text>(List.push(resource_id, p.leafs), func lf = if (lf == args.id) { null } else { ?lf });	};
+							case (?p) { 
+								p.leafs := List.mapFilter<Text, Text>(List.push(resource_id, p.leafs), func lf = if (lf == args.id) { null } else { ?lf });	
+								p.updated := ?Time.now();
+							};
 							case (null) {};
 						};
 						return #ok(build_id_url(resource_id, canister_id));					
@@ -1010,6 +1054,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					case (null) {
 						// just rename
 						res.name := file_name;
+						res.updated:= ?Time.now();
 						return #ok(build_id_url(args.id, canister_id));			
 					};
 				};
