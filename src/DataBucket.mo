@@ -315,6 +315,22 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};
 
 	/**
+	* Applies read-only attribute for the existing resource. The same effect could be achived by calling execute_action_on_resource!
+	* It is a shortcut version of the method to appy read-only attribute.
+	* Allowed only to the owner or operator of the bucket.
+	*/
+	public shared ({ caller }) func readonly_resource (id: Text, read_only : ?Nat) : async Result.Result<Types.IdUrl, Types.Errors> {
+		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
+		_readonly_resource ({
+			id = id;
+			action = #ReadOnly;
+			payload = null;
+			content_type = null; name = null;
+			parent_path = null; ttl = null; http_headers = null; read_only = read_only;
+		});
+	};	
+
+	/**
 	* Deletes the resouce by its id. The same effect could be achived by calling execute_action_on_resource!
 	* It is a shortcut version to delete a content.
 	* Allowed only to the owner or operator of the bucket.
@@ -402,8 +418,18 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 		var final_path:Text = name_to_apply;
 		var parent_directory_id:?Text = null;
 		var parent_opt : ?Types.Resource = null;
-		// only parent path is supported
-		let directory_id = switch (args.parent_path){
+		// parent_id is a priority to derive parent_path
+		let parent_path = switch (args.parent_id) {
+			case (?parent_id) {
+				switch (resources.get(parent_id)) {
+					case (?p) { ?full_path(p); 	};
+					case (null) {return #err(#NotFound);}
+				};
+			};
+			case (null) {args.parent_path;}
+		};
+
+		let directory_id = switch (parent_path){
 			case (?path) {
 				// check if parent_path is already exists. Otherwise returns an error
 				let path_tokens : [Text] = Iter.toArray(Text.tokens(path, #char '/'));
@@ -784,6 +810,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 					directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(dirs.size()) # "</span>";
 					directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(files.size()) # "</span></span>";
+					if (Option.isSome(v.read_only)) {
+						directory_html := directory_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span><span style=\"padding-left:20px;\" class=\"js_date\">"#Int.toText(Utils.unwrap(v.read_only))#"</span>";
+					};					
 					let total_f = Trie.size(resource_data);
 					// dirs
 					let total_d:Nat = resources.size() - total_f;
