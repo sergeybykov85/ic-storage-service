@@ -26,9 +26,9 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
     let OWNER = installation.caller;
 	// expiration period for chunk = 10 mins (in nanosec)
 	let TTL_CHUNK =  10 * 60 * 1_000_000_000;
-	// def scan period is 30 min = 1800 sec
-	let CLEAN_UP_PERIOD_SEC = 1800;
-	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # " .js_date {width:160px;} </style>"; 
+	// def scan period is 60 min = 3600 sec
+	let CLEAN_UP_PERIOD_SEC = 3600;
+	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE # "</style>"; 
 
 	stable let ACCESS_TYPE = initArgs.access_type;
 	stable let NAME = initArgs.name;
@@ -108,8 +108,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	};		
 
 	private func _is_readonly (r: Types.Resource) : Bool {
-		if (Option.isSome(r.read_only)) { 
-			return (Time.now() < Utils.unwrap(r.read_only));
+		if (Option.isSome(r.readonly)) { 
+			return (Time.now() < Utils.unwrap(r.readonly));
 		};
 		return false;	
 	};
@@ -246,11 +246,11 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 	private func _clean_up_readonly() : () {
 		let now = Time.now();
-		var read_only = Buffer.Buffer<Types.Resource>(5);
+		var readonly = Buffer.Buffer<Types.Resource>(5);
 		for ((key, r) in resources.entries())	{
-			if (Option.isSome(r.read_only)) { 
-				if (now > Utils.unwrap(r.read_only))  {
-					r.read_only:=null;
+			if (Option.isSome(r.readonly)) { 
+				if (now > Utils.unwrap(r.readonly))  {
+					r.readonly:=null;
 				};
 			};
 		};
@@ -310,7 +310,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			action = #Replace;
 			payload = ?content;
 			content_type = null; name = null;
-			parent_path = null; ttl = null; http_headers = null; read_only = null;
+			parent_path = null; ttl = null; http_headers = null; readonly = null;
 		});
 	};
 
@@ -319,14 +319,14 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	* It is a shortcut version of the method to appy read-only attribute.
 	* Allowed only to the owner or operator of the bucket.
 	*/
-	public shared ({ caller }) func readonly_resource (id: Text, read_only : ?Nat) : async Result.Result<Types.IdUrl, Types.Errors> {
+	public shared ({ caller }) func readonly_resource (id: Text, readonly : ?Nat) : async Result.Result<Types.IdUrl, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
 		_readonly_resource ({
 			id = id;
 			action = #ReadOnly;
 			payload = null;
 			content_type = null; name = null;
-			parent_path = null; ttl = null; http_headers = null; read_only = read_only;
+			parent_path = null; ttl = null; http_headers = null; readonly = readonly;
 		});
 	};	
 
@@ -461,7 +461,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = ?final_path;
 						parent_id = null;
 						ttl = args.ttl;
-						read_only = args.read_only;
+						readonly = args.readonly;
 					});
 					return r;
 				};
@@ -473,7 +473,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					resource_type = #Directory;
 					var http_headers = [];
 					var ttl = args.ttl;
-					var read_only = args.read_only;
+					var readonly = args.readonly;
 					var content_size = 0;
 					created = Time.now();
 					var updated = null;
@@ -498,7 +498,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = ?final_path;
 						parent_id = null;
 						ttl = args.ttl;
-						read_only = args.read_only;
+						readonly = args.readonly;
 					});
 					return r;
 				};
@@ -689,8 +689,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 			resource_html :=resource_html # "<div style=\"margin:10px;\">&#128193; <a style=\"font-weight:bold;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
 			// render readonly icon
-			if (Option.isSome(r.read_only)) {
-				resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+			if (Option.isSome(r.readonly)) {
+				resource_html := resource_html # "<span title=\"readonly\" style=\"padding-left:30px;\">&#128274;</span>";
 			};
 			// render ttl icon		
 			if (Option.isSome(r.ttl)) {
@@ -708,15 +708,15 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = NETWORK; view_mode = #Index});
 					let url_raw = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
-					if (Option.isSome(r.read_only)) {
-						resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+					if (Option.isSome(r.readonly)) {
+						resource_html := resource_html # "<span title=\"readonly\" style=\"padding-left:30px;\">&#128274;</span>";
 					};
 					if (Option.isSome(r.ttl)) {
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 					};	
 					switch (r.updated) {
 						case (?updated) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(updated)#"</span>"; };
-						case (null) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" >--- / ---</span>"; }	
+						case (null) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_no_date\">--- / ---</span>"; }	
 					};			
 					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
@@ -726,8 +726,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 				case (null) {
 					let url = Utils.build_resource_url({resource_id = id; canister_id = canister_id; network = NETWORK; view_mode = #Open});
 					resource_html := resource_html # "<div style=\"margin:10px;\">&#10148;<a style=\"padding-left:30px;\" href=\"" # Utils.appendTokenParam(url, token) # "\" target = \"_self\">"# r.name # "</a>";
-					if (Option.isSome(r.read_only)) {
-						resource_html := resource_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span>";
+					if (Option.isSome(r.readonly)) {
+						resource_html := resource_html # "<span title=\"readonly\" style=\"padding-left:30px;\">&#128274;</span>";
 					};					
 					if (Option.isSome(r.ttl)) {
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
@@ -810,8 +810,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 
 					directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(dirs.size()) # "</span>";
 					directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(files.size()) # "</span></span>";
-					if (Option.isSome(v.read_only)) {
-						directory_html := directory_html # "<span title=\"read only\" style=\"padding-left:30px;\">&#128274;</span><span style=\"padding-left:20px;\" class=\"js_date\">"#Int.toText(Utils.unwrap(v.read_only))#"</span>";
+					if (_is_readonly(v)) {
+						directory_html := directory_html # "<span title=\"readonly\" style=\"padding-left:30px;\">&#128274;</span><span style=\"padding-left:20px;\" class=\"js_date\">"#Int.toText(Utils.unwrap(v.readonly))#"</span>";
 					};					
 					let total_f = Trie.size(resource_data);
 					// dirs
@@ -1029,7 +1029,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 			resource_type = #File;
 			var http_headers = header;
 			var ttl = resource_args.ttl;
-			var read_only = resource_args.read_only;
+			var readonly = resource_args.readonly;
 			var content_size = content_size;
 			created = Time.now();
 			var updated = null;
@@ -1135,7 +1135,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 	private func _readonly_resource(args : Types.ActionResourceArgs) : Result.Result<Types.IdUrl, Types.Errors> {
 		switch (resources.get(args.id)) {
 			case (?res) { 
-				res.read_only := args.read_only; };
+				res.readonly := args.readonly; };
 			case (_) {
 				return #err(#NotFound);
 			};
@@ -1198,7 +1198,7 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						parent_path = null;
 						parent_id = parent_id;
 						ttl = res.ttl;
-						read_only = res.read_only;
+						readonly = res.readonly;
 					},
 					?res.http_headers
 				);

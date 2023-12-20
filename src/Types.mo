@@ -247,7 +247,7 @@ module {
 		// direcotry id. It has a precedence over the parent_path, but this field is not supported in all methods
 		parent_id : ?Text;
 		ttl : ?Nat;
-		read_only : ?Nat;
+		readonly : ?Nat;
 	};
 
 	public type ResourceAction = {
@@ -267,7 +267,7 @@ module {
 		name : ?Text;
 		parent_path : ?Text;
 		ttl : ?Nat;
-		read_only : ?Nat;
+		readonly : ?Nat;
 		http_headers: ?[NameValue];
 	};	
 
@@ -276,7 +276,7 @@ module {
 		var http_headers : [(Text, Text)];
 		var ttl : ?Nat;
 		// time if no modification allowed : remove or replace (if supported)
-		var read_only : ?Nat;
+		var readonly : ?Nat;
 		// resource could be replaced (to remain the same URL)
 		var content_size : Nat;
 		created : Int;
