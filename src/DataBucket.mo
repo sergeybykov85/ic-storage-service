@@ -715,8 +715,8 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 						resource_html := resource_html # "<span title=\"TTL\" style=\"padding-left:30px;\">&#9202;</span>";
 					};	
 					switch (r.updated) {
-						case (?updated) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(updated)#"</span>"; };
-						case (null) { resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_no_date\">--- / ---</span>"; }	
+						case (?updated) { resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\" class=\"js_date\">"#Int.toText(updated)#"</span>"; };
+						case (null) { resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\" class=\"js_no_date\">--- / ---</span>"; }	
 					};			
 					resource_html := resource_html # "<span style=\"float:right; padding-right:20px;\" class=\"js_date\">"#Int.toText(r.created)#"</span>";
 					resource_html := resource_html # "<a style=\"float:right; padding-right:20px;\" href=\"" # Utils.appendTokenParam(url_download, token) #"\" target = \"_blank\">download</a>";
@@ -767,13 +767,13 @@ shared (installation) actor class DataBucket(initArgs : Types.BucketArgs) = this
 					};
 		
 				};
-				directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(_t_dirs) # "</span>";
-				directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(_t_files) # "</span></span>";
+				directory_html := directory_html # "<span><i>Directories</i> : <span style=\"padding: 0 40 0 5; font-weight:bold;\">"# Nat.toText(_t_dirs) # "</span>";
+				directory_html := directory_html # "<i>Files</i> : <span style=\"padding: 0 40 0 5; font-weight:bold;\">"# Nat.toText(_t_files) # "</span></span>";
 				let total_f = Trie.size(resource_data);
 				// dirs
 				let total_d:Nat = resources.size() - total_f;
-				directory_html := directory_html # "<span style=\"float:right;\"><i>Total directories</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_d) # "</span>";
-				directory_html := directory_html # "<i>Total files</i> : <span style=\"padding: 0 20 0 5; font-weight:bold;\">"# Nat.toText(total_f) # "</span></span><hr/>";
+				directory_html := directory_html # "<span style=\"float:right;\"><i>Total directories</i> : <span style=\"padding: 0 40 0 5; font-weight:bold;\">"# Nat.toText(total_d) # "</span>";
+				directory_html := directory_html # "<i>Total files</i> : <span style=\"padding: 0 40 0 5; font-weight:bold;\">"# Nat.toText(total_f) # "</span></span><hr/>";
 
 				directory_html:=directory_html # dirs;
 				directory_html:=directory_html # files;
