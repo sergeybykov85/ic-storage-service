@@ -26,8 +26,8 @@ module {
     public let VERSION = "0.1";
     public let FORMAT_DATES_SCRIPT = "<script>let dates = document.getElementsByClassName(\"js_date\"); for (let i=0; i<dates.length; i++) { dates[i].innerHTML = (new Date(dates[i].textContent/1000000).toLocaleString()); } </script>";
     public let ROOT = "/";
-    public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #FFFDE7; color:#090909; font-family: helvetica; }  .js_date {width:160px;} .js_no_date {width:160px;} ";
-	public let DEF_TEMPLATE = "<div style=\"background-color: #FFFDE7; display:flex;\"><div style=\"max-width:750px; margin: 0 auto; padding:10;\">${VALUE}</div></div>";
+    public let DEF_BODY_STYLE = " a { text-decoration: underscore; color:#090909; } body { background-color: #F7F7F7; color:#090909; font-family: helvetica; }  .js_date {width:160px;} .js_no_date {width:160px;} ";
+	public let DEF_TEMPLATE = "<div style=\"background-color: #F7F7F7; display:flex;\"><div style=\"max-width:750px; margin: 0 auto; padding:10;\">${VALUE}</div></div>";
     public let HTML_RESOURCE_PATTERN : Text.Pattern = #text ".html";
     let HEX_SYMBOLS =  [
     '0', '1', '2', '3', '4', '5', '6', '7',
