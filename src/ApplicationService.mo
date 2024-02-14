@@ -13,6 +13,9 @@ import Timer "mo:base/Timer";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
 
+// -- ICS2 core --
+import ICS2Utils "mo:ics2-core/Utils";
+
 import Application "Application";
 import Types "./Types";
 import Utils "./Utils";
@@ -66,7 +69,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 	*/
     public shared ({ caller }) func add_whitelist_customers(ids: [Principal]) {
     	assert(caller == OWNER or _is_operator(caller));
-    	whitelist_customers := Utils.join(whitelist_customers, ids);
+    	whitelist_customers := ICS2Utils.join(whitelist_customers, ids);
     };	
 
 	public query func access_list() : async (Types.AccessList) {
@@ -102,10 +105,10 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		switch (customer_get(identity)) {
 			case (?customer) {
 				if (Option.isSome(args.name)) {
-					customer.name:= Utils.unwrap(args.name);
+					customer.name:= ICS2Utils.unwrap(args.name);
 				};
 				if (Option.isSome(args.description)) {
-					customer.description:= Utils.unwrap(args.description);
+					customer.description:= ICS2Utils.unwrap(args.description);
 				};				
 			};
 			case (null) { return #err(#NotFound);};
@@ -123,10 +126,10 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				// access control : application owner
 				if (application.owner != caller) return #err(#AccessDenied);				
 				if (Option.isSome(args.name)) {
-					application.name:= Utils.unwrap(args.name);
+					application.name:= ICS2Utils.unwrap(args.name);
 				};
 				if (Option.isSome(args.description)) {
-					application.description:= Utils.unwrap(args.description);
+					application.description:= ICS2Utils.unwrap(args.description);
 				};				
 			};
 			case (null) { return #err(#NotFound);};
@@ -185,7 +188,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					var applications = List.nil();
 					created = Time.now();
 				};
-				customers := Trie.put(customers, Utils.principal_key(identity), Principal.equal, customer).0;
+				customers := Trie.put(customers, ICS2Utils.principal_key(identity), Principal.equal, customer).0;
 				return #ok(Principal.toText(identity));
 			};
 		}
@@ -218,7 +221,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 						var applications = List.nil();
 						created = Time.now();
 					};
-					customers := Trie.put(customers, Utils.principal_key(caller), Principal.equal, customer).0;
+					customers := Trie.put(customers, ICS2Utils.principal_key(caller), Principal.equal, customer).0;
 					return #ok(Principal.toText(caller));
 				};
 			};
@@ -260,7 +263,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 
 				await management_actor.stop_canister({canister_id = app_principal});
 				await management_actor.delete_canister({canister_id = app_principal});
-				applications := Trie.remove(applications, Utils.principal_key(app_principal), Principal.equal).0;
+				applications := Trie.remove(applications, ICS2Utils.principal_key(app_principal), Principal.equal).0;
 				#ok(id);
 			};
 			case (null) {
@@ -297,7 +300,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 				if (Array.size(initArgs.spawned_canister_controllers) > 0){
 					ignore management_actor.update_settings({
 						canister_id = application_principal;
-						settings = { controllers = ? Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
+						settings = { controllers = ? ICS2Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
 					});
 				};
 
@@ -308,7 +311,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 					owner = to;
 					created = Time.now();
 				};
-				applications := Trie.put(applications, Utils.principal_key(application_principal), Principal.equal, app).0;
+				applications := Trie.put(applications, ICS2Utils.principal_key(application_principal), Principal.equal, app).0;
 				customer.applications := List.push(app_id, customer.applications);
 
 				return #ok(app_id);
@@ -392,9 +395,9 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 		return Buffer.toArray(res);
   	};	
 
-    private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, Utils.principal_key(id), Principal.equal);
+    private func customer_get(id : Principal) : ?Types.Customer = Trie.get(customers, ICS2Utils.principal_key(id), Principal.equal);
     
-	private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, Utils.principal_key(id), Principal.equal);
+	private func application_get(id : Principal) : ?Types.CustomerApp = Trie.get(applications, ICS2Utils.principal_key(id), Principal.equal);
 
 	private func _is_operator(id: Principal) : Bool {
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))

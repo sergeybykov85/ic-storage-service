@@ -14,16 +14,19 @@ import Timer "mo:base/Timer";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
 
-import DataBucket "DataBucket";
-import Http "./Http";
-import Types "./Types";
+// -- ICS2 core --
+import ICS2DataBucket "mo:ics2-core/DataBucket";
+import ICS2Utils "mo:ics2-core/Utils";
+import ICS2Http "mo:ics2-core/Http";
+
 import Utils "./Utils";
+import Types "./Types";
 
 shared  (installation) actor class Application(initArgs : Types.ApplicationArgs) = this {
 
     let OWNER = installation.caller;
 
-	let DEF_CSS =  "<style>" # Utils.DEF_BODY_STYLE #
+	let DEF_CSS =  "<style>" # ICS2Utils.DEF_BODY_STYLE #
 	".grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; } "#
 	".cell { min-height: 100px; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: relative; } "#
 	".cell_details { min-height: 250px; border: 1px solid gray; border-radius: 8px; padding: 8px 16px; position: relative; } "#
@@ -41,7 +44,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	// increment counter, internal needs
 	stable var _internal_increment : Nat = 0;	
 
-    private func repository_get(id : Text) : ?Types.Repository = Trie.get(repositories, Utils.text_key(id), Text.equal);	
+    private func repository_get(id : Text) : ?Types.Repository = Trie.get(repositories, ICS2Utils.text_key(id), Text.equal);	
 
 		
 	/**
@@ -88,11 +91,11 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	*/
 	public shared ({ caller }) func register_repository (args : Types.RepositoryArgs) : async Result.Result<Text, Types.Errors> {
 		if (not (caller == OWNER or _is_operator(caller))) return #err(#AccessDenied);
-		if (Utils.invalid_name(args.name)) return #err(#InvalidRequest);
+		if (ICS2Utils.invalid_name(args.name)) return #err(#InvalidRequest);
 		// control number of repositories
 		if (Trie.size(repositories) >= tier.options.number_of_repositories) return #err(#TierRestriction);
 		let canister_id = Principal.toText(Principal.fromActor(this));	
-		let repository_id = Utils.hash(canister_id, [args.name]);
+		let repository_id = ICS2Utils.hash(canister_id, [args.name]);
 		// repo name is uniq across application
 		switch (repository_get(repository_id)) {
 			case (?repo) {return #err(#DuplicateRecord);};
@@ -133,7 +136,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		repo.buckets:=List.push(bucket, repo.buckets);
 	
 
-		repositories := Trie.put(repositories, Utils.text_key(repository_id), Text.equal, repo).0;
+		repositories := Trie.put(repositories, ICS2Utils.text_key(repository_id), Text.equal, repo).0;
 		return #ok(repository_id);
 	};
 
@@ -146,13 +149,13 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		switch (repository_get(repository_id)) {
 			case (?repo) {
 				if (Option.isSome(args.description)) {
-					repo.description:= Utils.unwrap(args.description);
+					repo.description:= ICS2Utils.unwrap(args.description);
 				};
 				if (Option.isSome(args.tags)) {
-					repo.tags:= List.fromArray(Utils.unwrap(args.tags));
+					repo.tags:= List.fromArray(ICS2Utils.unwrap(args.tags));
 				};
 				if (Option.isSome(args.scaling_strategy)) {
-					repo.scaling_strategy:= Utils.unwrap(args.scaling_strategy);
+					repo.scaling_strategy:= ICS2Utils.unwrap(args.scaling_strategy);
 				};
 				return #ok(repository_id);
 			};
@@ -185,7 +188,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 					await management_actor.stop_canister({canister_id = bucket});
 					await management_actor.delete_canister({canister_id = bucket});
 				};
-				repositories := Trie.remove(repositories, Utils.text_key(repository_id), Text.equal).0;
+				repositories := Trie.remove(repositories, ICS2Utils.text_key(repository_id), Text.equal).0;
 				return #ok(repository_id);
 			};
 			case (null) {
@@ -305,7 +308,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			if (List.size(repository.access_keys) > 0) {
 				let tokens = List.map(repository.access_keys, func (ac : Types.AccessKey):Types.AccessToken {
 					{
-						token = Utils.unwrap(ac.token);
+						token = ICS2Utils.unwrap(ac.token);
 						created = ac.created;
 						valid_to = ac.valid_to;
 					}
@@ -594,10 +597,10 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				_internal_increment := _internal_increment + 1;
 				let canister_id =  Principal.toText(Principal.fromActor(this));
 				let now = Time.now();
-				let key_id = Utils.hash_time_based(canister_id # "access_key", _internal_increment);
+				let key_id = ICS2Utils.hash_time_based(canister_id # "access_key", _internal_increment);
 				// lets have a long secret
-				let secret_token:Text = Utils.hash(canister_id, [Int.toText(now), args.entropy]) # 
-				Utils.subText(Utils.hash(repository_id, [Int.toText(now), args.entropy]), 0, 32);
+				let secret_token:Text = ICS2Utils.hash(canister_id, [Int.toText(now), args.entropy]) # 
+				ICS2Utils.subText(ICS2Utils.hash(repository_id, [Int.toText(now), args.entropy]), 0, 32);
 				let ak:Types.AccessKey =  {
 					id = key_id;
 					name = args.name;
@@ -642,7 +645,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				for (bucket_id in List.toIter(repo.buckets)){
 					let bucket = Principal.fromText(bucket_id);
 					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
-					ignore await bucket_actor.remove_access_token(Option.get(Utils.unwrap(target).token, ""));
+					ignore await bucket_actor.remove_access_token(Option.get(ICS2Utils.unwrap(target).token, ""));
 				};				
 				return #ok(args.id);
 			};
@@ -710,25 +713,25 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 
-	public shared query ({ caller }) func http_request(request : Http.Request) : async Http.Response {
-		switch (Utils.get_resource_id(request.url)) {
+	public shared query ({ caller }) func http_request(request : ICS2Http.Request) : async ICS2Http.Response {
+		switch (ICS2Utils.get_resource_id(request.url)) {
 			case (?r) {
 				let path_size = Array.size(r.path);
 				let repository_id = switch (r.view_mode) {
 					case (#Index) {
 						let canister_id = Principal.toText(Principal.fromActor(this));
 						if (path_size == 0) {
-							Utils.ROOT;
-						} else 	Utils.hash(canister_id, r.path);
+							ICS2Utils.ROOT;
+						} else 	ICS2Utils.hash(canister_id, r.path);
 					};
 					case (_) { 
-						if (path_size == 0) return Http.not_found();
+						if (path_size == 0) return ICS2Http.not_found();
 						r.path[0]; 
 					};
 				};
 				return repository_http_handler(repository_id, r.view_mode);
 			};
-			case null { return Http.not_found();};
+			case null { return ICS2Http.not_found();};
 		};
 	};		
 
@@ -736,27 +739,27 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
     	Option.isSome(Array.find(operators, func (x: Principal) : Bool { x == id }))
     };
 
-    private func repository_http_handler(key : Text, view_mode : Types.ViewMode) : Http.Response {
-		if (key == Utils.ROOT) {
+    private func repository_http_handler(key : Text, view_mode : Types.ViewMode) : ICS2Http.Response {
+		if (key == ICS2Utils.ROOT) {
 			return root_view (view_mode);
 		};
 
 		switch (repository_get(key)) {
-            case (null) { Http.not_found() };
+            case (null) { ICS2Http.not_found() };
             case (? v)  {
 				///
 				let canister_id = Principal.toText(Principal.fromActor(this));
-				let root_url = Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
-				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2><span><a style=\"margin: 0 5px;\" href=\"" # root_url # "\" >"#Utils.ROOT#"</a></span>  &#128464; "#v.name#" </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
+				let root_url = ICS2Utils.build_resource_url({resource_id = ""; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+				var directory_html = "<html><head>"#DEF_CSS#"</head><body>" # "<h2><span><a style=\"margin: 0 5px;\" href=\"" # root_url # "\" >"#ICS2Utils.ROOT#"</a></span>  &#128464; "#v.name#" </h2><hr/><h3>Repositories</h3><div class=\"grid\">";
 				
 				directory_html:=directory_html # render_repository_details(canister_id, key, v);
 				// extra details possible here
-				return Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
+				return ICS2Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#ICS2Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
 			};
         };
     };
 
-    private func root_view (view_mode : Types.ViewMode) : Http.Response {
+    private func root_view (view_mode : Types.ViewMode) : ICS2Http.Response {
 		switch (view_mode) {
 			case (#Index) {
 				let canister_id = Principal.toText(Principal.fromActor(this));
@@ -764,21 +767,21 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 				for ((id, r) in Trie.iter(repositories)) {
 					directory_html:=directory_html # render_repository_overview(canister_id, id, r);
 				};
-				Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
+				ICS2Http.success([("content-type", "text/html; charset=UTF-8")], Text.encodeUtf8(directory_html # "</div>"#ICS2Utils.FORMAT_DATES_SCRIPT#"</body></html>"));
 			};
-			case (_) {Http.not_found()};
+			case (_) {ICS2Http.not_found()};
 		};
 	};
 
 	private func render_repository_overview (canister_id: Text, id:Text, r:Types.Repository) : Text {
 		let path = r.name;
-		let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+		let url = ICS2Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
 		var resource_html = "<div class=\"cell\">";
 		resource_html :=resource_html # "<div>&#128464; <a style=\"font-weight:bold; color:#0969DA;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
 		resource_html := resource_html # "<p><i>"# r.description # "</i></p>";
 		resource_html := resource_html # "<p><u>Total buckets</u> : "# Nat.toText(List.size(r.buckets)) ;
 		if (r.access_type == #Public and r.active_bucket != "") {
-			let bucket_url = Utils.build_resource_url({resource_id = ""; canister_id = r.active_bucket; network = initArgs.network; view_mode = #Index});
+			let bucket_url = ICS2Utils.build_resource_url({resource_id = ""; canister_id = r.active_bucket; network = initArgs.network; view_mode = #Index});
 			resource_html := resource_html # "<a style=\"float:right; padding-right:10px;\" href=\"" # bucket_url #"\" target = \"_blank\">&#128194; Open active bucket</a>";
 		} else	if (r.access_type == #Private) {
 			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\">&#128273;</span>";
@@ -786,7 +789,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		resource_html := resource_html # "</p>";
 		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span>";
 		if (Option.isSome(r.last_update)){
-			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\"><u style=\"padding-left\">Last update</u> : <span class=\"js_date\">"# Int.toText(Utils.unwrap(r.last_update)) # "</span></span>";
+			resource_html := resource_html # "<span style=\"float:right; padding-right:10px;\"><u style=\"padding-left\">Last update</u> : <span class=\"js_date\">"# Int.toText(ICS2Utils.unwrap(r.last_update)) # "</span></span>";
 		};
 		resource_html := resource_html # "</p>";
 		resource_html := resource_html # "<p class=\"access_tag\">"# debug_show(r.access_type) # "</p>";
@@ -800,7 +803,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 
 	private func render_repository_details (canister_id: Text, id:Text, r:Types.Repository) : Text {
 		let path = r.name;
-		let url = Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
+		let url = ICS2Utils.build_resource_url({resource_id = path; canister_id = canister_id; network = initArgs.network; view_mode = #Index});
 		var resource_html = "<div class=\"cell_details\">";
 		resource_html :=resource_html # "<div>&#128464; <a style=\"font-weight:bold; color:#0969DA;\" href=\"" # url # "\" target = \"_self\">"# r.name # "</a></div>";
 		resource_html := resource_html # "<p><i>"# r.description # "</i></p>";
@@ -810,13 +813,13 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		};		
 		resource_html := resource_html # "<p><u>Created</u> : <span class=\"js_date\">"# Int.toText(r.created) # "</span></p>";
 		if (Option.isSome(r.last_update)){
-			resource_html := resource_html # "<p><u>Last update</u> : <span class=\"js_date\">"# Int.toText(Utils.unwrap(r.last_update)) # "</span></p>";
+			resource_html := resource_html # "<p><u>Last update</u> : <span class=\"js_date\">"# Int.toText(ICS2Utils.unwrap(r.last_update)) # "</span></p>";
 		};		
 		resource_html := resource_html # "<p><u>Total buckets</u> : "# Nat.toText(List.size(r.buckets)) #"</p>" ;
 		if (r.access_type == #Public) {
 			resource_html := resource_html # "<div class=\"grid\">";
 			for (bucket_id in List.toIter(r.buckets)) {
-				let bucket_url = Utils.build_resource_url({resource_id = ""; canister_id = bucket_id; network = initArgs.network; view_mode = #Index});
+				let bucket_url = ICS2Utils.build_resource_url({resource_id = ""; canister_id = bucket_id; network = initArgs.network; view_mode = #Index});
 				let bucket_id_fmt = if (r.active_bucket == bucket_id) {
 					"<b>" # bucket_id # "</b>";
 				}else {
@@ -841,7 +844,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		if (List.size(repository.access_keys) > 0) {
 			let tokens = List.map(repository.access_keys, func (ac : Types.AccessKey):Types.AccessToken {
 				{
-					token = Utils.unwrap(ac.token);
+					token = ICS2Utils.unwrap(ac.token);
 					created = ac.created;
 					valid_to = ac.valid_to;
 				}
@@ -850,7 +853,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		};
 		
 		Cycles.add(cycles);
-		let bucket_actor = await DataBucket.DataBucket({
+		let bucket_actor = await ICS2DataBucket.DataBucket({
 			// apply the user account as operator of the bucket
 			name = name;
 			operators = operators;
@@ -864,7 +867,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		if (Array.size(initArgs.spawned_canister_controllers) > 0){
 			ignore management_actor.update_settings({
 				canister_id = bucket_principal;
-				settings = { controllers = ? Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
+				settings = { controllers = ? ICS2Utils.include(initArgs.spawned_canister_controllers, Principal.fromActor(this));};
 			});
 		};
 		return Principal.toText(bucket_principal);

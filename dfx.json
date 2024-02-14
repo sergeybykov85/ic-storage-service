@@ -10,11 +10,6 @@
       "type": "motoko",
       "dependencies": []
     },    
-    "data_bucket": {
-      "main": "src/DataBucket.mo",
-      "type": "motoko",
-      "dependencies": []
-    },     
     "service_config": {
       "main": "src/ServiceConfig.mo",
       "type": "motoko",
@@ -23,9 +18,8 @@
   },
   "defaults": {
     "build": {
-      "packtool": "",
-      "args": ""
+      "packtool": "mops sources"
     }
-  },  
+  },   
   "version": 1
 }
