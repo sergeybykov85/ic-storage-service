@@ -3,14 +3,12 @@ import Array "mo:base/Array";
 import Buffer "mo:base/Buffer";
 import List "mo:base/List";
 import Iter "mo:base/Iter";
-import Map "mo:base/HashMap";
 import Nat "mo:base/Nat";
 import Int "mo:base/Int";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
-import Timer "mo:base/Timer";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
 
@@ -22,7 +20,7 @@ import ICS2Http "mo:ics2-core/Http";
 import Utils "./Utils";
 import Types "./Types";
 
-shared  (installation) actor class Application(initArgs : Types.ApplicationArgs) = this {
+shared  (installation) actor class _Application(initArgs : Types.ApplicationArgs) = this {
 
     let OWNER = installation.caller;
 
@@ -80,7 +78,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 		let cycles_to_leave = Option.get(args.remainder_cycles, 0);
 		if  (cycles > cycles_to_leave) {
 			let cycles_to_send:Nat = cycles - cycles_to_leave;
-			Cycles.add(cycles_to_send);
+			Cycles.add<system>(cycles_to_send);
             await wallet.wallet_receive();
 		}
 	};	
@@ -243,7 +241,6 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 					case (null) {repo.buckets;}
 				};
 				for (bucket_id in List.toIter(to_process)){
-					let bucket = Principal.fromText(bucket_id);
 					let bucket_actor : Types.DataBucketActor = actor (bucket_id);
 					await bucket_actor.clean_up();
 				};
@@ -713,7 +710,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	};
 
 
-	public shared query ({ caller }) func http_request(request : ICS2Http.Request) : async ICS2Http.Response {
+	public shared query func http_request(request : ICS2Http.Request) : async ICS2Http.Response {
 		switch (ICS2Utils.get_resource_id(request.url)) {
 			case (?r) {
 				let path_size = Array.size(r.path);
@@ -852,8 +849,8 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			access_tokens_opt:=?List.toArray(tokens);
 		};
 		
-		Cycles.add(cycles);
-		let bucket_actor = await ICS2DataBucket.DataBucket({
+		Cycles.add<system>(cycles);
+		let bucket_actor = await ICS2DataBucket._DataBucket({
 			// apply the user account as operator of the bucket
 			name = name;
 			operators = operators;
@@ -861,6 +858,9 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 			access_type = repository.access_type;
 			access_token = access_tokens_opt;
 		});
+
+		// run timer : default period in seconds
+		ignore await bucket_actor.apply_cleanup_period (3600);
 
 		let bucket_principal = Principal.fromActor(bucket_actor);
 		// IC Application is a controller of the bucket. but other users could be added here
@@ -885,7 +885,7 @@ shared  (installation) actor class Application(initArgs : Types.ApplicationArgs)
 	
   	public shared func wallet_receive() {
     	let amount = Cycles.available();
-    	ignore Cycles.accept(amount);
+    	ignore Cycles.accept<system>(amount);
   	};
 	
 	public query func available_cycles() : async Nat {

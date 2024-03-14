@@ -1,6 +1,6 @@
 import Cycles "mo:base/ExperimentalCycles";
 import Array "mo:base/Array";
-import Text "mo:base/Text";
+
 import List "mo:base/List";
 import Hash "mo:base/Hash";
 import Nat "mo:base/Nat";
@@ -12,7 +12,7 @@ import Option "mo:base/Option";
 
 import Types "./Types";
 
-shared (installation) actor class ServiceConfig() = this {
+shared (installation) actor class () = this {
 
 	// owner has a super power, do anything inside this actor and assign any list of operators
     stable let OWNER = installation.caller;
@@ -113,7 +113,7 @@ shared (installation) actor class ServiceConfig() = this {
 	/**
 	* Returns past options for the tier (if any modifications in the options took place)
 	*/
-	public shared ({ caller }) func get_tier_options_history (t:Types.TierId) : async [Types.TierOptions] {
+	public shared func get_tier_options_history (t:Types.TierId) : async [Types.TierOptions] {
     	switch (tier_options_history_get(t)) {
         	case (?h) { List.toArray(h); };
         	case (_) {[];};
@@ -169,7 +169,7 @@ shared (installation) actor class ServiceConfig() = this {
 
   	public shared func wallet_receive() {
     	let amount = Cycles.available();
-    	ignore Cycles.accept(amount);
+    	ignore Cycles.accept<system>(amount);
   	};
 	
   	public query func available_cycles() : async Nat {

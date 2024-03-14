@@ -1,4 +1,4 @@
 [dependencies]
-base = "0.9.8"
+base = "0.11.0"
 sha2 = "0.0.4"
 ics2-core = "https://github.com/sergeybykov85/ics2-core#master"

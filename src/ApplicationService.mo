@@ -3,13 +3,11 @@ import Array "mo:base/Array";
 import List "mo:base/List";
 import Buffer "mo:base/Buffer";
 import Iter "mo:base/Iter";
-import Map "mo:base/HashMap";
 import Nat "mo:base/Nat";
 import Result "mo:base/Result";
 import Principal "mo:base/Principal";
 import Time "mo:base/Time";
 import Trie "mo:base/Trie";
-import Timer "mo:base/Timer";
 import Text "mo:base/Text";
 import Option "mo:base/Option";
 
@@ -20,7 +18,7 @@ import Application "Application";
 import Types "./Types";
 import Utils "./Utils";
 
-shared (installation) actor class ApplicationService(initArgs : Types.ApplicationServiceArgs) = this {
+shared (installation) actor class (initArgs : Types.ApplicationServiceArgs) = this {
 
 	// owner has a super power, do anything inside this actor and assign any list of operators
     stable let OWNER = installation.caller;
@@ -284,8 +282,8 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 						await configuration_actor.get_app_init_cycles(); 
 					};
 				};
-				Cycles.add(cycles_assign);
-				let application_actor = await Application.Application({
+				Cycles.add<system>(cycles_assign);
+				let application_actor = await Application._Application({
 					tier = customer.tier;
 					configuration_service = configuration_service;
 					operators = [Principal.fromActor(this), to];
@@ -429,7 +427,7 @@ shared (installation) actor class ApplicationService(initArgs : Types.Applicatio
 
   	public shared func wallet_receive() {
     	let amount = Cycles.available();
-    	ignore Cycles.accept(amount);
+    	ignore Cycles.accept<system>(amount);
   	};
 	
   	public query func available_cycles() : async Nat {
